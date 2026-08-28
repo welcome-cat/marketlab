@@ -8,60 +8,117 @@ export const HomePage: React.FC = () => {
 
   const handleJoinStudent = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!roomId.trim() || !companyName.trim()) return;
-    navigate(`/student?roomId=${roomId}&name=${encodeURIComponent(companyName)}`);
+    if (!roomId.trim() || !companyName.trim()) {
+      alert('룸 코드와 회사 이름을 모두 입력해주세요.');
+      return;
+    }
+    navigate(`/student?roomId=${encodeURIComponent(roomId.trim())}&name=${encodeURIComponent(companyName.trim())}`);
   };
 
   return (
-    <div style={{ maxWidth: '500px', margin: '60px auto', fontFamily: 'sans-serif', padding: '24px', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}>
-      <h1 style={{ textAlign: 'center', color: '#1e293b', marginBottom: '8px' }}>MarketLab</h1>
-      <p style={{ textAlign: 'center', color: '#64748b', fontSize: '14px', marginBottom: '32px' }}>
-        고등학교 경제 수업 실시간 시장 시뮬레이터
-      </p>
-
-      {/* 교사 모드 진입 */}
-      <div style={{ marginBottom: '28px', padding: '16px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
-        <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', color: '#334155' }}>👨‍🏫 교사용 모드</h3>
-        <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#64748b' }}>새로운 수업 룸을 개설하고 시장 정책을 제어합니다.</p>
-        <button
-          onClick={() => navigate('/teacher')}
-          style={{ width: '100%', padding: '10px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
-        >
-          새 수업 개설하기
-        </button>
-      </div>
-
-      {/* 학생 모드 진입 */}
-      <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
-        <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', color: '#334155' }}>🏢 학생(기업) 모드</h3>
-        <form onSubmit={handleJoinStudent}>
-          <div style={{ marginBottom: '12px' }}>
-            <label style={{ display: 'block', fontSize: '13px', color: '#475569', marginBottom: '4px' }}>룸 코드</label>
-            <input
-              type="text"
-              placeholder="예: ROOM101"
-              value={roomId}
-              onChange={(e) => setRoomId(e.target.value)}
-              style={{ width: '100%', padding: '8px 12px', boxSizing: 'border-box', border: '1px solid #cbd5e1', borderRadius: '6px' }}
-            />
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+      <div style={{ width: '100%', maxWidth: '440px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '16px', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01)', padding: '32px' }}>
+        
+        {/* 헤더 로고 & 타이틀 */}
+        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '54px', height: '54px', borderRadius: '14px', background: '#eff6ff', color: '#2563eb', fontSize: '26px', marginBottom: '12px' }}>
+            📊
           </div>
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: '13px', color: '#475569', marginBottom: '4px' }}>기업명 (팀 이름/학생 이름)</label>
-            <input
-              type="text"
-              placeholder="예: 알파테크"
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              style={{ width: '100%', padding: '8px 12px', boxSizing: 'border-box', border: '1px solid #cbd5e1', borderRadius: '6px' }}
-            />
-          </div>
+          <h1 style={{ margin: 0, fontSize: '24px', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.5px' }}>MarketLab</h1>
+          <p style={{ margin: '6px 0 0 0', fontSize: '14px', color: '#64748b' }}>
+            고등학교 경제 수업 실시간 시장 시뮬레이터
+          </p>
+        </div>
+
+        {/* 학생 입장 폼 */}
+        <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px', marginBottom: '20px' }}>
+          <h2 style={{ margin: '0 0 14px 0', fontSize: '15px', fontWeight: 700, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span>🏢</span> 학생(회사) 입장하기
+          </h2>
+
+          <form onSubmit={handleJoinStudent}>
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '6px' }}>
+                룸 코드
+              </label>
+              <input
+                type="text"
+                placeholder="선생님이 안내한 코드 (예: ROOM101)"
+                value={roomId}
+                onChange={(e) => setRoomId(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '11px 14px',
+                  fontSize: '14px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  background: '#ffffff',
+                  outline: 'none',
+                }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '18px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#475569', marginBottom: '6px' }}>
+                회사 이름
+              </label>
+              <input
+                type="text"
+                placeholder="팀 또는 회사 이름 (예: 한빛전자)"
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '11px 14px',
+                  fontSize: '14px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  background: '#ffffff',
+                  outline: 'none',
+                }}
+              />
+            </div>
+
+            <button
+              type="submit"
+              style={{
+                width: '100%',
+                padding: '12px',
+                fontSize: '15px',
+                fontWeight: 700,
+                color: '#ffffff',
+                background: '#2563eb',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                transition: 'background 0.15s ease',
+                boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)',
+              }}
+            >
+              회사 설립 및 시장 입장
+            </button>
+          </form>
+        </div>
+
+        {/* 교사 모드 진입 링크 */}
+        <div style={{ textAlign: 'center', paddingTop: '12px', borderTop: '1px solid #f1f5f9' }}>
+          <span style={{ fontSize: '13px', color: '#64748b', marginRight: '8px' }}>선생님이신가요?</span>
           <button
-            type="submit"
-            style={{ width: '100%', padding: '10px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+            onClick={() => navigate('/teacher')}
+            style={{
+              padding: '6px 12px',
+              fontSize: '13px',
+              fontWeight: 600,
+              color: '#2563eb',
+              background: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              borderRadius: '6px',
+              cursor: 'pointer',
+            }}
           >
-            시장 참여하기
+            👨‍🏫 교사용 대시보드 개설
           </button>
-        </form>
+        </div>
       </div>
     </div>
   );

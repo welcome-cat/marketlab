@@ -1,3 +1,3 @@
 export * from './roomService';
-export * from './decisionService';
+export * from './companyService';
 export * from './firebase/config';
