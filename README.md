@@ -1,32 +1,30 @@
-# React + TypeScript + Vite
+# MarketLab 경제 수업 시뮬레이터
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+## 로컬 실행
 
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+기본 접속 주소는 `http://127.0.0.1:5173/`입니다.
+
+## AI 시장 신문 활성화
+
+AI 키는 브라우저의 `.env`에 넣지 않습니다. Firebase Functions의 비밀값으로만 저장합니다.
+
+```bash
+cd functions
+npm install
+cd ..
+firebase functions:secrets:set OPENAI_API_KEY
+firebase deploy --only functions
+```
+
+배포 결과의 `generateMarketNews` URL을 프로젝트 루트 `.env`에 설정한 뒤 개발 서버를 다시 시작합니다.
+
+```dotenv
+VITE_NEWS_FUNCTION_URL=https://YOUR_REGION-YOUR_PROJECT.cloudfunctions.net/generateMarketNews
+```
+
+함수 URL이 없거나 AI 호출이 실패하면 수업이 중단되지 않고 간접적인 자동 템플릿 기사가 발행됩니다.

@@ -95,7 +95,7 @@ export const HomePage: React.FC = () => {
                 boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)',
               }}
             >
-              회사 설립 및 시장 입장
+              회사 접속하기
             </button>
           </form>
         </div>
@@ -116,7 +116,7 @@ export const HomePage: React.FC = () => {
               cursor: 'pointer',
             }}
           >
-            👨‍🏫 교사용 대시보드 개설
+            👨‍🏫 교사용 대시보드
           </button>
         </div>
       </div>

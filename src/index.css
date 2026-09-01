@@ -69,3 +69,80 @@ input[type='range']::-moz-range-thumb {
 input[type='range']::-moz-range-thumb:hover {
   transform: scale(1.15);
 }
+
+/* 데스크톱 모니터용 좌우 분할 대시보드 */
+.student-dashboard {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.student-dashboard > section,
+.teacher-dashboard > section {
+  min-width: 0;
+}
+
+.student-market,
+.student-news,
+.student-result,
+.student-hint {
+  grid-column: 1 / -1;
+}
+
+.student-cost {
+  grid-row: span 2;
+}
+
+/* 오른쪽 생산 카드가 길어도 왼쪽의 판매 카드가 바로 이어지도록 한다. */
+.student-production {
+  grid-row: span 2;
+}
+
+.teacher-shell {
+  width: 100%;
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+.teacher-dashboard {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.teacher-room-summary,
+.teacher-demand-events,
+.teacher-markets,
+.teacher-curves,
+.teacher-companies {
+  grid-column: 1 / -1;
+}
+
+.teacher-dashboard:not(:has(.teacher-history)) .teacher-tech {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 900px) {
+  .student-dashboard,
+  .teacher-dashboard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .student-dashboard > section,
+  .teacher-dashboard > section {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
+@media (min-width: 1500px) {
+  .student-dashboard,
+  .teacher-dashboard {
+    gap: 22px;
+  }
+}
