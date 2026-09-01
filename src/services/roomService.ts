@@ -2,7 +2,7 @@ import { collection, doc, getDoc, getDocs, onSnapshot, runTransaction, setDoc, u
 import type { DocumentData, DocumentReference, QueryDocumentSnapshot, QuerySnapshot, Unsubscribe } from 'firebase/firestore';
 import { db } from './firebase/config';
 import type { DemandEvent, Market, Room } from '../types/domain';
-import { DEMAND_EVENT_OPTIONS, MARKETS } from '../types/domain';
+import { DEFAULT_UNLOCK_ROUNDS, DEMAND_EVENT_OPTIONS, MARKETS } from '../types/domain';
 
 const baselineEvents = (): DemandEvent[] => MARKETS.map((market) => ({
   marketId: market.id,
@@ -63,11 +63,12 @@ export const normalizeRoom = (roomId: string, data: Partial<Room>): Room => ({
     ? MARKETS.map((market) => normalizeDemandEvent(data.demandEvents?.find((event) => event.marketId === market.id) || {}, market))
     : baselineEvents(),
   pendingDemandEvents: data.pendingDemandEvents?.length
-    ? data.pendingDemandEvents.flatMap((event) => {
-      const market = MARKETS.find((item) => item.id === event.marketId);
-      return market ? [normalizeDemandEvent(event, market)] : [];
-    })
+    ? MARKETS.map((market) => normalizeDemandEvent(
+      data.pendingDemandEvents?.find((event) => event.marketId === market.id) || {},
+      market,
+    ))
     : [],
+  unlockRounds: { ...DEFAULT_UNLOCK_ROUNDS, ...(data.unlockRounds || {}) },
   createdAt: data.createdAt || 0,
 });
 
@@ -134,7 +135,7 @@ export const roomService = {
   createRoom: async (roomId: string, title: string): Promise<void> => {
     const roomRef = doc(db, 'rooms', roomId);
     if ((await getDoc(roomRef)).exists()) throw new Error('ROOM_ALREADY_EXISTS');
-    await setDoc(roomRef, { id: roomId, title, markets: MARKETS, currentRound: 1, status: 'WAITING', roundPhase: 'DECISION', demandEvents: baselineEvents(), pendingDemandEvents: [], createdAt: Date.now() } satisfies Room);
+    await setDoc(roomRef, { id: roomId, title, markets: MARKETS, currentRound: 1, status: 'WAITING', roundPhase: 'DECISION', demandEvents: baselineEvents(), pendingDemandEvents: [], unlockRounds: DEFAULT_UNLOCK_ROUNDS, createdAt: Date.now() } satisfies Room);
   },
   startRoom: async (roomId: string): Promise<void> => {
     const roomRef = doc(db, 'rooms', roomId);
@@ -194,6 +195,11 @@ export const roomService = {
       }
       transaction.update(roomRef, { pendingDemandEvents: events });
     });
+  },
+  updateUnlockRounds: async (roomId: string, unlockRounds: Room['unlockRounds']): Promise<void> => {
+    const values = Object.values(unlockRounds);
+    if (values.some((value) => !Number.isInteger(value) || value < 1 || value > 20)) throw new Error('INVALID_UNLOCK_ROUNDS');
+    await updateDoc(doc(db, 'rooms', roomId), { unlockRounds });
   },
   updateRoom: async (roomId: string, nextRoomId: string, nextTitle: string): Promise<Room> => {
     const normalizedRoomId = nextRoomId.trim();

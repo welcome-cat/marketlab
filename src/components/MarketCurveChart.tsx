@@ -40,16 +40,6 @@ export const MarketCurveChart: React.FC<Props> = ({ market, plans, demandMultipl
   const supplyPoints = supplyPrices.map((price) => ({ price, background: backgroundSupply(price), total: totalSupply(price) })).filter((point) => point.background > 0.01);
   const backgroundSupplyPath = supplyPoints.map((point, index) => `${index === 0 ? 'M' : 'L'} ${x(point.background)} ${y(point.price)}`).join(' ');
   const totalSupplyPath = supplyPoints.map((point, index) => `${index === 0 ? 'M' : 'L'} ${x(point.total)} ${y(point.price)}`).join(' ');
-  const integrate = (from: number, to: number, fn: (price: number) => number) => {
-    const steps = 80;
-    const step = (to - from) / steps;
-    let area = 0;
-    for (let index = 0; index < steps; index += 1) area += (fn(from + index * step) + fn(from + (index + 1) * step)) * step / 2;
-    return Math.max(0, Math.round(area));
-  };
-  const consumerSurplus = integrate(competitiveMarket.marketPrice, maxPrice, (price) => calculateMarketDemand(market, price, demandMultiplier));
-  const producerSurplus = integrate(minPrice, competitiveMarket.marketPrice, totalSupply);
-
   return <div style={{ minWidth: 0 }}>
     <h4 style={{ margin: '0 0 6px' }}>{market.icon} {market.name}</h4>
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${market.name}의 가격별 수요량과 공급량`} style={{ width: '100%', height: 'auto' }}>
@@ -72,9 +62,6 @@ export const MarketCurveChart: React.FC<Props> = ({ market, plans, demandMultipl
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginTop: '4px', fontSize: '12px', color: '#475569' }}>
       <strong>기준가격 {market.basePrice.toLocaleString()}원</strong><strong>기준수요 {market.demandAtBasePrice.toLocaleString()}{quantityUnit}</strong><strong>수요 가격탄력성 {market.priceElasticity.toFixed(2)}</strong><span>{market.priceElasticity > 1 ? '탄력적 수요' : '비탄력적 수요'}</span><strong>역공급함수 P(Q): 공급탄력성 {market.supplyElasticity.toFixed(2)}의 2차함수</strong>
     </div>
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '6px', marginTop: '8px', fontSize: '11px' }}><span style={{ padding: '7px', background: '#fee2e2', borderRadius: '7px' }}>추정 소비자잉여<br /><b>{consumerSurplus.toLocaleString()}원</b></span><span style={{ padding: '7px', background: '#dbeafe', borderRadius: '7px' }}>추정 생산자잉여<br /><b>{producerSurplus.toLocaleString()}원</b></span><span style={{ padding: '7px', background: '#dcfce7', borderRadius: '7px' }}>추정 총잉여<br /><b>{(consumerSurplus + producerSurplus).toLocaleString()}원</b></span></div>
-    <small style={{ color: '#94a3b8' }}>잉여는 현재 그래프에 표시된 가격 범위 안에서 근사 계산한 참고값입니다.</small>
-    <small style={{ color: '#64748b' }}>시장 전체 공급은 생산량이 증가할수록 가격·한계비용의 기울기가 커지는 P(Q)=a+bQ+cQ² · 학생 개별기업은 별도의 한계비용곡선을 사용 · 학생 총공급 {studentSupply.toLocaleString()}{quantityUnit}을 시장공급에 더해 공급곡선을 오른쪽으로 이동 · 추정 가격 영향 {competitiveMarket.studentPriceImpact.toFixed(2)}원 · 10원 단위 반영 후 시장가격 {competitiveMarket.marketPrice.toLocaleString()}원</small>
     {plans.length > 0 && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: '8px', marginTop: '12px' }}>{plans.map((plan, index) => {
       const fallbackCost = Math.max(shutdownPrice, plan.marginalCost || shutdownPrice);
       const curvePoints = plan.supplyCurve?.length ? plan.supplyCurve : [{ quantity: plan.productionCapacity, marginalCost: fallbackCost }];

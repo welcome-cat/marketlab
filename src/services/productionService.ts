@@ -2,7 +2,8 @@ import { collection, doc, getDoc, getDocs, onSnapshot, query, runTransaction, wh
 import type { Unsubscribe } from 'firebase/firestore';
 import { db } from './firebase/config';
 import { normalizeRoom } from './roomService';
-import type { Company, InventoryItem, MachineAssetLot, Market, MarketRoundResult, ProductionPlan, Room } from '../types/domain';
+import { EMPTY_UPGRADES } from '../types/domain';
+import type { Company, CompanyUpgrades, InventoryItem, MachineAssetLot, Market, MarketRoundResult, ProductionPlan, Room, UpgradeType } from '../types/domain';
 
 export interface ProductionQuote {
   rentCost: number; wageCost: number; unitMaterialCost: number; materialCost: number; productionCost: number;
@@ -15,33 +16,21 @@ export interface ProductionQuote {
   supplyCurve: Array<{ quantity: number; marginalCost: number }>;
   machineCountAfter: number; technologyLevelAfter: number; spendingLimit: number;
   depreciationCost: number; allocatedInvestmentCost: number; economicCost: number;
+  upgradePurchased: UpgradeType | null; upgradeCost: number; upgradesAfter: CompanyUpgrades;
 }
 
-const TECHNOLOGY_MARKET_FIT: Record<string, Record<string, { productivity: number; material: number; hint: string }>> = {
-  tech_automation: {
-    market_tumbler: { productivity: 1.12, material: 0.98, hint: '반복 생산과 기계 활용에 강점이 있습니다.' },
-    market_toy: { productivity: 0.94, material: 1.03, hint: '농업의 불규칙한 공정에서는 자동화 강점이 제한됩니다.' },
-    market_smartphone: { productivity: 1.08, material: 0.98, hint: '대규모 조립 공정에서 자동화 효과를 기대할 수 있습니다.' },
-  },
-  tech_skilled_labor: {
-    market_tumbler: { productivity: 1.04, material: 1, hint: '서비스형 생산에 무난한 숙련도를 갖췄습니다.' },
-    market_toy: { productivity: 1.13, material: 0.97, hint: '노동집약적 생산에서 숙련 인력의 강점이 큽니다.' },
-    market_smartphone: { productivity: 0.96, material: 1.02, hint: '정밀 설비가 부족하면 숙련만으로는 한계가 있습니다.' },
-  },
-  tech_precision: {
-    market_tumbler: { productivity: 0.98, material: 0.98, hint: '정밀성의 이점이 제품가격에 비해 크지 않습니다.' },
-    market_toy: { productivity: 1, material: 0.98, hint: '재료 손실을 줄일 수 있지만 생산성 우위는 보통입니다.' },
-    market_smartphone: { productivity: 1.15, material: 0.91, hint: '정밀 조립과 고가 부품 절약에 뚜렷한 강점이 있습니다.' },
-  },
-  tech_eco: {
-    market_tumbler: { productivity: 1.08, material: 0.91, hint: '재료 절약과 친환경 소비 선호에 잘 맞습니다.' },
-    market_toy: { productivity: 1.07, material: 0.94, hint: '자원 효율과 농산물 생산의 결합이 유리합니다.' },
-    market_smartphone: { productivity: 0.95, material: 1.01, hint: '고가 전자부품 생산에서는 현재 강점이 제한됩니다.' },
-  },
+export const getTechnologyMarketFit = (company: Company, market: Market) => {
+  // 스마트폰은 기업 특성과 관계없이 누구나 같은 조건에서 위험을 감수해 진입한다.
+  if (market.id === 'market_smartphone') return { productivity: 1, material: 1, hint: '스마트폰 시장에서는 기업 특성 보정이 적용되지 않습니다.' };
+  const favored = company.industryTraitId === `industry_${market.id === 'market_tumbler' ? 'service' : market.id === 'market_toy' ? 'agriculture' : market.id === 'market_shoes' ? 'fashion' : ''}`;
+  const industryProductivity = favored ? 1.1 : 0.98;
+  const industryMaterial = favored ? 0.96 : 1.01;
+  return {
+    productivity: industryProductivity,
+    material: industryMaterial,
+    hint: favored ? '선택한 업종 경험이 이 시장과 잘 맞아 생산성과 재료 효율에 유리합니다.' : '업종 경험의 직접적인 비교우위는 작은 시장입니다.',
+  };
 };
-
-export const getTechnologyMarketFit = (company: Company, market: Market) =>
-  TECHNOLOGY_MARKET_FIT[company.technologyId]?.[market.id] ?? { productivity: 1, material: 1, hint: '특별한 우위나 불리함이 없습니다.' };
 
 export const calculateWorkerMarginalProduct = (
   company: Company,
@@ -52,18 +41,21 @@ export const calculateWorkerMarginalProduct = (
 ) => {
   const profile = company.productionProfile;
   const marketFit = market ? getTechnologyMarketFit(company, market) : { productivity: 1 };
-  const technologyAdjustedBase = (market?.firstWorkerProductivity ?? profile.firstWorkerProductivity) * marketFit.productivity * (1 + technologyLevel * profile.technologyBoostRate);
+  const upgrades = { ...EMPTY_UPGRADES, ...(company.upgrades || {}) };
+  const technologyAdjustedBase = (market?.firstWorkerProductivity ?? profile.firstWorkerProductivity) * marketFit.productivity * (1 + technologyLevel * profile.technologyBoostRate) * (1 + upgrades.workerTraining * 0.06);
   if (!market) {
     const fallback = technologyAdjustedBase - profile.productivityDecline * Math.floor((workerNumber - 1) / Math.max(1, machineCount));
     return Math.max(0, Math.round(fallback));
   }
   const machines = Math.max(1, machineCount);
+  const effectiveMachines = 1 + Math.max(0, machines - 1) * (1 + upgrades.advancedEquipment * 0.12);
   const isRice = market.id === 'market_toy';
   const productivityBase = isRice ? technologyAdjustedBase * (1 + (machines - 1) * 0.12) : technologyAdjustedBase;
   // 노동자 한 명이 추가될 때마다 한계생산물이 연속적으로 체감한다.
   // 기계는 혼잡 증가 속도를 낮추지만, 분모 방식이라 추가 기계의 개선 폭도 점차 작아진다.
-  const congestion = isRice ? workerNumber - 1 : (workerNumber - 1) / machines;
-  const decayRate = isRice ? Math.min(0.98, market.laborDecayRate + (machines - 1) * 0.005) : market.laborDecayRate;
+  const congestion = isRice ? workerNumber - 1 : (workerNumber - 1) / effectiveMachines;
+  const baseDecayRate = Math.min(0.985, market.laborDecayRate + upgrades.workerTraining * 0.012);
+  const decayRate = isRice ? Math.min(0.985, baseDecayRate + (machines - 1) * 0.005) : baseDecayRate;
   return Math.max(0.01, Number((productivityBase * Math.pow(decayRate, congestion)).toFixed(2)));
 };
 
@@ -88,7 +80,8 @@ export const calculateFirmSupplyCurve = (
   machineCount: number,
   technologyLevel: number,
 ) => {
-  const unitMaterialCost = Math.round(market.materialUnitCost * market.materialCostMultiplier * getTechnologyMarketFit(company, market).material);
+  const upgrades = { ...EMPTY_UPGRADES, ...(company.upgrades || {}) };
+  const unitMaterialCost = Math.round(market.materialUnitCost * market.materialCostMultiplier * getTechnologyMarketFit(company, market).material * Math.pow(0.95, upgrades.materialEfficiency) * Math.pow(0.98, upgrades.ecoProduction));
   let cumulativeQuantity = 0;
   return Array.from({ length: workerCount }, (_, index) => {
     const marginalProduct = calculateWorkerMarginalProduct(company, index + 1, machineCount, technologyLevel, market);
@@ -130,6 +123,13 @@ export const calculateResearchCost = (company: Company, researchLevels: number) 
   return cost;
 };
 
+export const calculateUpgradeCost = (market: Market, company: Company, type: UpgradeType, workerCount: number) => {
+  const currentLevel = company.upgrades?.[type] || 0;
+  const levelFactor = currentLevel + 1;
+  const typeFactor = type === 'advancedEquipment' ? 1.4 : type === 'workerTraining' ? 0.45 + workerCount * 0.08 : type === 'ecoProduction' ? 1.2 : 1;
+  return Math.round(market.researchCost * levelFactor * typeFactor);
+};
+
 const marketMachineAssets = (company: Company, marketId: string) => (company.machineAssets || []).filter((asset) => asset.marketId === marketId);
 export const getMarketMachineCount = (company: Company, marketId: string) => 1 + (company.machineAssets || []).filter((asset) => asset.marketId === marketId || asset.marketId === '*').reduce((sum, asset) => sum + asset.quantity, 0);
 const resaleRate = (purchasedRound: number, currentRound: number) => Math.max(0.1, 0.5 - Math.max(0, currentRound - purchasedRound - 1) * 0.1);
@@ -161,24 +161,28 @@ export const calculateProductionQuote = (
   requestedQuantity: number,
   workerCount: number,
   machinePurchases = 0,
-  researchLevels = 0,
+  upgradePurchase: UpgradeType | null = null,
   includeSetupCost = false,
   currentRound = 1,
   machineSales = 0,
 ): ProductionQuote => {
   const marketMachineCountBefore = getMarketMachineCount(company, market.id);
   const machineCountAfter = marketMachineCountBefore + machinePurchases - machineSales;
-  const technologyLevelAfter = (company.technologyLevel || 0) + researchLevels;
-  const productionCapacity = calculateProductionCapacity(company, workerCount, machineCountAfter, technologyLevelAfter, market);
-  const currentMarginalProduct = calculateWorkerMarginalProduct(company, workerCount, machineCountAfter, technologyLevelAfter, market);
-  const nextMarginalProduct = calculateWorkerMarginalProduct(company, workerCount + 1, machineCountAfter, technologyLevelAfter, market);
+  const upgradesAfter = { ...EMPTY_UPGRADES, ...(company.upgrades || {}) };
+  if (upgradePurchase) upgradesAfter[upgradePurchase] += 1;
+  const upgradedCompany = { ...company, upgrades: upgradesAfter };
+  const technologyLevelAfter = company.technologyLevel || 0;
+  const productionCapacity = calculateProductionCapacity(upgradedCompany, workerCount, machineCountAfter, technologyLevelAfter, market);
+  const currentMarginalProduct = calculateWorkerMarginalProduct(upgradedCompany, workerCount, machineCountAfter, technologyLevelAfter, market);
+  const nextMarginalProduct = calculateWorkerMarginalProduct(upgradedCompany, workerCount + 1, machineCountAfter, technologyLevelAfter, market);
   const rentCost = calculateFacilityRent(market, machineCountAfter);
   const wageCost = market.wagePerWorker * workerCount;
-  const unitMaterialCost = Math.round(market.materialUnitCost * market.materialCostMultiplier * getTechnologyMarketFit(company, market).material);
+  const unitMaterialCost = Math.round(market.materialUnitCost * market.materialCostMultiplier * getTechnologyMarketFit(upgradedCompany, market).material * Math.pow(0.95, upgradesAfter.materialEfficiency) * Math.pow(0.98, upgradesAfter.ecoProduction));
   const materialCost = unitMaterialCost * requestedQuantity;
   const productionCost = rentCost + wageCost + materialCost;
   const machineInvestmentCost = market.machinePrice * machinePurchases;
-  const researchCost = market.researchCost * researchLevels * ((company.technologyLevel || 0) + 1);
+  const upgradeCost = upgradePurchase ? calculateUpgradeCost(market, company, upgradePurchase, workerCount) : 0;
+  const researchCost = upgradeCost;
   const setupCost = includeSetupCost ? market.initialSetupCost : 0;
   const machineResaleRevenue = calculateMachineResaleRevenue(company, market.id, machineSales, currentRound);
   const investmentCost = machineInvestmentCost + researchCost + setupCost;
@@ -188,7 +192,7 @@ export const calculateProductionQuote = (
   const depreciationCost = existingMachineDepreciation + Math.round(machineInvestmentCost / 6);
   const allocatedInvestmentCost = depreciationCost + Math.round(researchCost / 3) + Math.round(setupCost / 4);
   const economicCost = productionCost + allocatedInvestmentCost;
-  const supplyCurve = calculateFirmSupplyCurve(company, market, workerCount, machineCountAfter, technologyLevelAfter);
+  const supplyCurve = calculateFirmSupplyCurve(upgradedCompany, market, workerCount, machineCountAfter, technologyLevelAfter);
   const marginalCost = findFirmMarginalCost(supplyCurve, requestedQuantity);
   const nextMarginalCost = requestedQuantity < productionCapacity ? findFirmMarginalCost(supplyCurve, requestedQuantity + 1) : null;
 
@@ -200,12 +204,13 @@ export const calculateProductionQuote = (
     averageCost: requestedQuantity > 0 ? Math.round(economicCost / requestedQuantity) : 0,
     marginalCost, nextMarginalCost, supplyCurve, machineCountAfter, technologyLevelAfter,
     spendingLimit: company.cash, depreciationCost, allocatedInvestmentCost, economicCost,
+    upgradePurchased: upgradePurchase, upgradeCost, upgradesAfter,
   };
 };
 
 interface ConfirmProductionInput {
   roomId: string; companyId: string; marketId: string; requestedQuantity: number;
-  workerCount: number; machinePurchases: number; machineSales?: number; researchLevels: number; askingPrice?: number;
+  workerCount: number; machinePurchases: number; machineSales?: number; researchLevels?: number; upgradePurchase?: UpgradeType | null; askingPrice?: number;
 }
 
 const updateMachineAssets = (assets: MachineAssetLot[], marketId: string, sales: number, purchases: number, purchasePrice: number, roundNumber: number) => {
@@ -392,7 +397,7 @@ export const productionService = {
       const [roomSnapshot, companySnapshot] = await Promise.all([transaction.get(roomRef), transaction.get(companyRef)]);
       if (!roomSnapshot.exists() || !companySnapshot.exists()) throw new Error('COMPANY_NOT_FOUND');
       const room = normalizeRoom(roomSnapshot.id, roomSnapshot.data() as Partial<Room>);
-      if (room.currentRound < 5 || room.roundPhase !== 'DECISION') throw new Error('LOAN_FEATURE_LOCKED');
+      if (room.currentRound < room.unlockRounds.loans || room.roundPhase !== 'DECISION') throw new Error('LOAN_FEATURE_LOCKED');
       const company = companySnapshot.data() as Company;
       const terms = calculateLoanTerms(company, inventories, room.currentRound);
       if (amount > terms.availableLoan) throw new Error('LOAN_LIMIT_EXCEEDED');
@@ -414,12 +419,12 @@ export const productionService = {
     });
   },
   confirmProduction: async (input: ConfirmProductionInput): Promise<ProductionPlan> => {
-    const { roomId, companyId, marketId, requestedQuantity, workerCount, machinePurchases, machineSales = 0, researchLevels } = input;
+    const { roomId, companyId, marketId, requestedQuantity, workerCount, machinePurchases, machineSales = 0, upgradePurchase = null } = input;
     if (!Number.isInteger(requestedQuantity) || requestedQuantity <= 0) throw new Error('INVALID_PRODUCTION_QUANTITY');
     if (!Number.isInteger(workerCount) || workerCount < 1) throw new Error('INVALID_WORKER_COUNT');
     if (!Number.isInteger(machinePurchases) || machinePurchases < 0) throw new Error('INVALID_INVESTMENT');
     if (!Number.isInteger(machineSales) || machineSales < 0) throw new Error('INVALID_MACHINE_SALE');
-    if (!Number.isInteger(researchLevels) || researchLevels < 0 || researchLevels > 1) throw new Error('INVALID_INVESTMENT');
+    if (upgradePurchase && !['advancedEquipment', 'workerTraining', 'materialEfficiency', 'ecoProduction'].includes(upgradePurchase)) throw new Error('INVALID_INVESTMENT');
 
     const roomRef = doc(db, 'rooms', roomId);
     const companyRef = doc(db, 'rooms', roomId, 'companies', companyId);
@@ -437,6 +442,7 @@ export const productionService = {
       if (!market) throw new Error('MARKET_NOT_FOUND');
       if (!Number.isFinite(input.askingPrice) || (input.askingPrice || 0) <= 0) throw new Error('INVALID_ASKING_PRICE');
       const company = companySnapshot.data() as Company;
+      if (room.currentRound === 1 && company.traitsConfirmed === false) throw new Error('COMPANY_TRAITS_REQUIRED');
       if (workerCount < calculateMinimumWorkerCount(company, room.currentRound)) throw new Error('WORKER_REDUCTION_NOT_ALLOWED');
       const planId = `${companyId}_${room.currentRound}`;
       const planRef = doc(db, 'rooms', roomId, 'productionPlans', planId);
@@ -446,10 +452,12 @@ export const productionService = {
       if (planSnapshot.exists()) throw new Error('PRODUCTION_ALREADY_CONFIRMED');
 
       const sellableMachines = marketMachineAssets(company, market.id).filter((asset) => asset.purchasedRound < room.currentRound).reduce((sum, asset) => sum + asset.quantity, 0);
-      if (room.currentRound < 2 && (machinePurchases > 0 || machineSales > 0)) throw new Error('MACHINE_FEATURE_LOCKED');
-      if (room.currentRound < 3 && researchLevels > 0) throw new Error('RESEARCH_FEATURE_LOCKED');
+      if (room.currentRound < room.unlockRounds.machines && (machinePurchases > 0 || machineSales > 0)) throw new Error('MACHINE_FEATURE_LOCKED');
+      if (upgradePurchase && room.currentRound < room.unlockRounds[upgradePurchase]) throw new Error('UPGRADE_FEATURE_LOCKED');
+      if (upgradePurchase && company.lastUpgradeRound === room.currentRound) throw new Error('UPGRADE_ALREADY_PURCHASED');
+      if (upgradePurchase && (company.upgrades?.[upgradePurchase] || 0) >= 3) throw new Error('UPGRADE_MAX_LEVEL');
       if (machineSales > sellableMachines) throw new Error('INVALID_MACHINE_SALE');
-      const quote = calculateProductionQuote(company, market, requestedQuantity, workerCount, machinePurchases, researchLevels, !inventorySnapshot.exists(), room.currentRound, machineSales);
+      const quote = calculateProductionQuote(company, market, requestedQuantity, workerCount, machinePurchases, upgradePurchase, !inventorySnapshot.exists(), room.currentRound, machineSales);
       if (quote.machineCountAfter > market.maxMachines) throw new Error('FACILITY_LIMIT_EXCEEDED');
       const savedTarget = company.productionTargets?.[market.id];
       const canChangeProductionTarget = market.productionCycleRounds === 1 || (room.currentRound - 1) % market.productionCycleRounds === 0 || savedTarget === undefined;
@@ -474,7 +482,8 @@ export const productionService = {
         productionCapacity: quote.productionCapacity, marginalProduct: quote.currentMarginalProduct, marginalCost: quote.marginalCost,
         supplyCurve: quote.supplyCurve,
         rentCost: quote.rentCost, wageCost: quote.wageCost, materialCost: quote.materialCost, productionCost: quote.productionCost,
-        machinePurchases, machineCountAfter: quote.machineCountAfter, researchLevels, technologyLevelAfter: quote.technologyLevelAfter,
+        machinePurchases, machineCountAfter: quote.machineCountAfter, researchLevels: 0, technologyLevelAfter: quote.technologyLevelAfter,
+        upgradePurchased: quote.upgradePurchased, upgradeCost: quote.upgradeCost, upgradesAfter: quote.upgradesAfter,
         investmentCost: quote.investmentCost, totalCost: quote.totalCost, openingCash: company.cash, spendingLimit: quote.spendingLimit,
         depreciationCost: quote.depreciationCost, allocatedInvestmentCost: quote.allocatedInvestmentCost,
         machineSales, machineResaleRevenue: quote.machineResaleRevenue,
@@ -491,6 +500,8 @@ export const productionService = {
         lastHiringRound: workerCount > (company.employeeCount || 1) ? room.currentRound : (company.lastHiringRound ?? room.currentRound - 1),
         machineAssets: updateMachineAssets(company.machineAssets || [], market.id, machineSales, machinePurchases, market.machinePrice, room.currentRound),
         technologyLevel: quote.technologyLevelAfter,
+        upgrades: quote.upgradesAfter,
+        lastUpgradeRound: upgradePurchase ? room.currentRound : (company.lastUpgradeRound || null),
         productionTargets: canChangeProductionTarget ? { ...(company.productionTargets || {}), [market.id]: requestedQuantity } : company.productionTargets || {},
       });
       transaction.set(inventoryRef, inventory);
@@ -521,6 +532,16 @@ export const productionService = {
       callback(snapshot.docs.map((item) => item.data() as ProductionPlan));
     });
   },
+
+  subscribeAllProductionPlans: (
+    roomId: string,
+    callback: (plans: ProductionPlan[]) => void,
+  ): Unsubscribe => onSnapshot(
+    collection(db, 'rooms', roomId, 'productionPlans'),
+    (snapshot) => callback(snapshot.docs
+      .map((item) => item.data() as ProductionPlan)
+      .sort((a, b) => a.roundNumber - b.roundNumber || a.companyId.localeCompare(b.companyId))),
+  ),
 
   startSelling: async (roomId: string): Promise<void> => {
     const roomRef = doc(db, 'rooms', roomId);

@@ -12,7 +12,7 @@ import {
 import type { Unsubscribe } from 'firebase/firestore';
 import { db } from './firebase/config';
 import type { Company } from '../types/domain';
-import { TECHNOLOGIES } from '../types/domain';
+import { EMPTY_UPGRADES, INDUSTRY_TRAITS, TECHNOLOGIES } from '../types/domain';
 
 const randomAdjustment = (range: number) =>
   Math.floor(Math.random() * (range * 2 + 1)) - range;
@@ -93,6 +93,8 @@ const normalizeCompany = (company: Company): Company => ({
   employeeCount: company.employeeCount || 1,
   machineAssets: company.machineAssets || ((company.machineCount || 1) > 1 ? [{ id: 'legacy-machines', marketId: '*', quantity: (company.machineCount || 1) - 1, purchasePrice: 0, purchasedRound: 0 }] : []),
   technologyLevel: company.technologyLevel || 0,
+  traitsConfirmed: company.traitsConfirmed ?? false,
+  upgrades: { ...EMPTY_UPGRADES, ...(company.upgrades || {}) },
 });
 
 const normalizeCompanyName = (name: string) =>
@@ -192,7 +194,7 @@ export const companyService = {
         throw new Error('ROOM_NOT_JOINABLE');
       }
 
-      const randomTech = TECHNOLOGIES[Math.floor(Math.random() * TECHNOLOGIES.length)];
+      const defaultTech = TECHNOLOGIES[0];
       const now = Date.now();
       const newCompany: Company = {
         id: companyId,
@@ -200,11 +202,13 @@ export const companyService = {
         name: trimmedName,
         normalizedName,
         cash: 100000,
-        technologyId: randomTech.id,
-        technologyName: randomTech.name,
-        technologyDescription: randomTech.description,
-        technologyIcon: randomTech.icon,
-        productionProfile: createProductionProfile(randomTech.id),
+        technologyId: defaultTech.id,
+        technologyName: defaultTech.name,
+        technologyDescription: defaultTech.description,
+        technologyIcon: defaultTech.icon,
+        productionProfile: createProductionProfile(defaultTech.id),
+        traitsConfirmed: false,
+        upgrades: EMPTY_UPGRADES,
         machineCount: 1,
         employeeCount: 1,
         machineAssets: [],
@@ -222,6 +226,54 @@ export const companyService = {
         updatedAt: now,
       });
       return newCompany;
+    });
+  },
+
+  selectCompanyTraits: async (
+    roomId: string,
+    companyId: string,
+    industryTraitId: string,
+    technologyId: string,
+  ): Promise<void> => {
+    const industry = INDUSTRY_TRAITS.find((item) => item.id === industryTraitId);
+    const technology = TECHNOLOGIES.find((item) => item.id === technologyId);
+    if (!industry || !technology) throw new Error('INVALID_COMPANY_TRAIT');
+    const roomRef = doc(db, 'rooms', roomId);
+    const companyRef = doc(db, 'rooms', roomId, 'companies', companyId);
+    await runTransaction(db, async (transaction) => {
+      const [roomSnapshot, companySnapshot] = await Promise.all([
+        transaction.get(roomRef),
+        transaction.get(companyRef),
+      ]);
+      if (!roomSnapshot.exists() || !companySnapshot.exists()) throw new Error('COMPANY_NOT_FOUND');
+      const room = roomSnapshot.data();
+      if ((room.currentRound || 1) !== 1 || (room.roundPhase || 'DECISION') !== 'DECISION') throw new Error('TRAIT_SELECTION_CLOSED');
+      transaction.update(companyRef, {
+        industryTraitId: industry.id,
+        industryTraitName: industry.name,
+        industryTraitDescription: industry.description,
+        industryTraitIcon: industry.icon,
+        technologyId: technology.id,
+        technologyName: technology.name,
+        technologyDescription: technology.description,
+        technologyIcon: technology.icon,
+        productionProfile: createProductionProfile(technology.id),
+        traitsConfirmed: true,
+      });
+    });
+  },
+
+  selectIndustryTrait: async (roomId: string, companyId: string, industryTraitId: string): Promise<void> => {
+    const industry = INDUSTRY_TRAITS.find((item) => item.id === industryTraitId);
+    if (!industry) throw new Error('INVALID_COMPANY_TRAIT');
+    const roomRef = doc(db, 'rooms', roomId);
+    const companyRef = doc(db, 'rooms', roomId, 'companies', companyId);
+    await runTransaction(db, async (transaction) => {
+      const [roomSnapshot, companySnapshot] = await Promise.all([transaction.get(roomRef), transaction.get(companyRef)]);
+      if (!roomSnapshot.exists() || !companySnapshot.exists()) throw new Error('COMPANY_NOT_FOUND');
+      const room = roomSnapshot.data();
+      if ((room.currentRound || 1) !== 1 || (room.roundPhase || 'DECISION') !== 'DECISION') throw new Error('TRAIT_SELECTION_CLOSED');
+      transaction.update(companyRef, { industryTraitId: industry.id, industryTraitName: industry.name, industryTraitDescription: industry.description, industryTraitIcon: industry.icon, traitsConfirmed: true });
     });
   },
 

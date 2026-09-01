@@ -86,6 +86,7 @@ export const DEMAND_EVENT_OPTIONS: DemandEventOption[] = [
 export const MARKETS: Market[] = [
   { id: 'market_tumbler', name: '카페 음료 시장', description: '대체재가 많아 가격 변화에 수요가 민감한 대규모 가격수용 시장입니다.', icon: '☕', announcedPrice: 900, basePrice: 900, demandAtBasePrice: 180000, materialCostMultiplier: 0.7, marketType: 'PERFECT_COMPETITION', priceControl: 'MARKET_PRICE', wagePerWorker: 1500, machinePrice: 9000, rentPerRound: 3500, materialUnitCost: 1000, firstWorkerProductivity: 45, productivityDecline: 4, initialSetupCost: 5000, researchCost: 2500, priceElasticity: 1.3, competitionSensitivity: 0, studentSupplyWeight: 1, priceAdjustmentLimit: 0.03, supplyElasticity: 0.8, laborDecayRate: 0.8, productionCycleRounds: 1, maxMachines: 6, supplyShiftMultiplier: 1 },
   { id: 'market_toy', name: '쌀 시장', description: '20kg 한 포대를 거래 단위로 하며 수요와 단기 공급이 모두 비탄력적인 대규모 농산물 시장입니다.', icon: '🌾', announcedPrice: 5000, basePrice: 5000, demandAtBasePrice: 90000, materialCostMultiplier: 1.15, marketType: 'PERFECT_COMPETITION', priceControl: 'MARKET_PRICE', wagePerWorker: 3500, machinePrice: 30000, rentPerRound: 9000, materialUnitCost: 3740, firstWorkerProductivity: 24, productivityDecline: 4, initialSetupCost: 18000, researchCost: 6500, priceElasticity: 0.4, competitionSensitivity: 0, studentSupplyWeight: 1, priceAdjustmentLimit: 0.03, supplyElasticity: 0.5, laborDecayRate: 0.93, productionCycleRounds: 3, maxMachines: 12, supplyShiftMultiplier: 1 },
+  { id: 'market_shoes', name: '운동화 시장', description: '설비·숙련·재료 관리가 고르게 필요해 기업의 생산방식에 따라 비교우위가 달라지는 경쟁시장입니다.', icon: '👟', announcedPrice: 3200, basePrice: 3200, demandAtBasePrice: 120000, materialCostMultiplier: 1, marketType: 'PERFECT_COMPETITION', priceControl: 'MARKET_PRICE', wagePerWorker: 2600, machinePrice: 22000, rentPerRound: 7000, materialUnitCost: 2050, firstWorkerProductivity: 30, productivityDecline: 4, initialSetupCost: 12000, researchCost: 5000, priceElasticity: 1.05, competitionSensitivity: 0, studentSupplyWeight: 1, priceAdjustmentLimit: 0.03, supplyElasticity: 0.65, laborDecayRate: 0.86, productionCycleRounds: 1, maxMachines: 9, supplyShiftMultiplier: 1 },
   { id: 'market_smartphone', name: '스마트폰 시장', description: '고가의 부품·설비와 고임금이 필요한 고위험·고수익 과점시장입니다.', icon: '📱', announcedPrice: 10000, basePrice: 10000, demandAtBasePrice: 70, materialCostMultiplier: 2.1, marketType: 'OLIGOPOLY', priceControl: 'FIRM_PRICE', wagePerWorker: 6500, machinePrice: 65000, rentPerRound: 16000, materialUnitCost: 2860, firstWorkerProductivity: 18, productivityDecline: 7, initialSetupCost: 45000, researchCost: 14000, priceElasticity: 1.2, competitionSensitivity: 0.12, studentSupplyWeight: 1, priceAdjustmentLimit: 0, supplyElasticity: 0, laborDecayRate: 0.86, productionCycleRounds: 1, maxMachines: 8, supplyShiftMultiplier: 1 },
 ];
 
@@ -100,6 +101,7 @@ export interface Room {
   sellingEndsAt?: number;
   demandEvents: DemandEvent[];
   pendingDemandEvents: DemandEvent[];
+  unlockRounds: UnlockRounds;
   createdAt: number;
   // 이전 버전 룸 문서 호환용
   marketId?: string;
@@ -107,6 +109,16 @@ export interface Room {
   marketDescription?: string;
   marketIcon?: string;
 }
+
+export interface UnlockRounds {
+  machines: number;
+  advancedEquipment: number;
+  workerTraining: number;
+  materialEfficiency: number;
+  ecoProduction: number;
+  loans: number;
+}
+export const DEFAULT_UNLOCK_ROUNDS: UnlockRounds = { machines: 2, advancedEquipment: 2, workerTraining: 3, materialEfficiency: 4, ecoProduction: 5, loans: 5 };
 
 export interface Technology { id: string; name: string; description: string; icon: string; }
 export const TECHNOLOGIES: Technology[] = [
@@ -116,9 +128,23 @@ export const TECHNOLOGIES: Technology[] = [
   { id: 'tech_eco', name: '친환경 생산라인', description: '에너지와 재료를 효율적으로 사용하는 생산설비입니다.', icon: '🌿' },
 ];
 
+export interface IndustryTrait { id: string; name: string; description: string; icon: string; favoredMarketId: string; }
+export const INDUSTRY_TRAITS: IndustryTrait[] = [
+  { id: 'industry_service', name: '고객 대응 경험', description: '빠른 주문 처리와 표준화된 서비스 운영 경험이 있습니다.', icon: '🧋', favoredMarketId: 'market_tumbler' },
+  { id: 'industry_agriculture', name: '농업 생산 경험', description: '작황 관리와 농산물 생산 과정에 익숙합니다.', icon: '🚜', favoredMarketId: 'market_toy' },
+  { id: 'industry_fashion', name: '패션 제조 경험', description: '디자인 변경과 신발 조립 공정에 익숙합니다.', icon: '🧵', favoredMarketId: 'market_shoes' },
+];
+
 export interface Company {
   id: string; roomId: string; name: string; normalizedName?: string; cash: number;
   technologyId: string; technologyName: string; technologyDescription: string; technologyIcon: string;
+  industryTraitId?: string;
+  industryTraitName?: string;
+  industryTraitDescription?: string;
+  industryTraitIcon?: string;
+  traitsConfirmed?: boolean;
+  upgrades?: CompanyUpgrades;
+  lastUpgradeRound?: number;
   productionProfile: ProductionProfile;
   machineCount: number;
   employeeCount: number;
@@ -131,6 +157,16 @@ export interface Company {
   productionTargets?: Record<string, number>;
   status: 'ACTIVE'; createdAt: number; joinedAt: number;
 }
+
+export type UpgradeType = 'advancedEquipment' | 'workerTraining' | 'materialEfficiency' | 'ecoProduction';
+export interface CompanyUpgrades { advancedEquipment: number; workerTraining: number; materialEfficiency: number; ecoProduction: number; }
+export const EMPTY_UPGRADES: CompanyUpgrades = { advancedEquipment: 0, workerTraining: 0, materialEfficiency: 0, ecoProduction: 0 };
+export const UPGRADE_OPTIONS: Array<{ id: UpgradeType; name: string; icon: string; description: string }> = [
+  { id: 'advancedEquipment', name: '고급 설비', icon: '⚙️', description: '기계의 혼잡 완화 효과와 자본 생산성을 높입니다.' },
+  { id: 'workerTraining', name: '노동자 훈련', icon: '🎓', description: '노동자의 한계생산을 높이고 체감 속도를 늦춥니다.' },
+  { id: 'materialEfficiency', name: '재료 효율 개선', icon: '♻️', description: '제품 1개당 재료 사용량과 가변비를 줄입니다.' },
+  { id: 'ecoProduction', name: '친환경 생산 도입', icon: '🌱', description: '재료·에너지 낭비를 줄이고 친환경 시장 변화에 대비합니다.' },
+];
 
 export interface MachineAssetLot {
   id: string;
@@ -163,6 +199,9 @@ export interface ProductionPlan {
   supplyCurve?: Array<{ quantity: number; marginalCost: number }>;
   rentCost: number; wageCost: number; materialCost: number; productionCost: number;
   machinePurchases: number; machineCountAfter: number; researchLevels: number; technologyLevelAfter: number;
+  upgradePurchased?: UpgradeType | null;
+  upgradeCost?: number;
+  upgradesAfter?: CompanyUpgrades;
   machineSales?: number; machineResaleRevenue?: number;
   investmentCost: number; totalCost: number; openingCash: number; spendingLimit: number;
   askingPrice?: number; offeredQuantity?: number; soldQuantity?: number;
