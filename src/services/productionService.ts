@@ -6,7 +6,7 @@ import { EMPTY_UPGRADES } from '../types/domain';
 import type { Company, CompanyUpgrades, InventoryItem, MachineAssetLot, Market, MarketRoundResult, ProductionPlan, Room, UpgradeType } from '../types/domain';
 
 export interface ProductionQuote {
-  rentCost: number; wageCost: number; unitMaterialCost: number; materialCost: number; productionCost: number;
+  rentCost: number; wageCost: number; unitMaterialCost: number; materialCost: number; policyCost: number; earlyTerminationCost: number; productionCost: number;
   machineInvestmentCost: number; researchCost: number; investmentCost: number; totalCost: number;
   setupCost: number;
   machineSales: number; machineResaleRevenue: number; netCashCost: number; marketMachineCountBefore: number;
@@ -17,14 +17,16 @@ export interface ProductionQuote {
   machineCountAfter: number; technologyLevelAfter: number; spendingLimit: number;
   depreciationCost: number; allocatedInvestmentCost: number; economicCost: number;
   upgradePurchased: UpgradeType | null; upgradeCost: number; upgradesAfter: CompanyUpgrades;
+  machineRepairCost: number; machineRepairs: number;
 }
 
 export const getTechnologyMarketFit = (company: Company, market: Market) => {
   // 스마트폰은 기업 특성과 관계없이 누구나 같은 조건에서 위험을 감수해 진입한다.
   if (market.id === 'market_smartphone') return { productivity: 1, material: 1, hint: '스마트폰 시장에서는 기업 특성 보정이 적용되지 않습니다.' };
-  const favored = company.industryTraitId === `industry_${market.id === 'market_tumbler' ? 'service' : market.id === 'market_toy' ? 'agriculture' : market.id === 'market_shoes' ? 'fashion' : ''}`;
-  const industryProductivity = favored ? 1.1 : 0.98;
-  const industryMaterial = favored ? 0.96 : 1.01;
+  const favoredTrait = market.id === 'market_tumbler' ? 'industry_service' : market.id === 'market_toy' ? 'industry_agriculture' : 'industry_fashion';
+  const favored = company.industryTraitId === favoredTrait;
+  const industryProductivity = favored ? (market.id === 'market_toy' ? 1.2 : 1.15) : 0.92;
+  const industryMaterial = favored ? (market.id === 'market_toy' ? 0.88 : market.id === 'market_shoes' ? 0.9 : 0.94) : 1.1;
   return {
     productivity: industryProductivity,
     material: industryMaterial,
@@ -82,13 +84,14 @@ export const calculateFirmSupplyCurve = (
 ) => {
   const upgrades = { ...EMPTY_UPGRADES, ...(company.upgrades || {}) };
   const unitMaterialCost = Math.round(market.materialUnitCost * market.materialCostMultiplier * getTechnologyMarketFit(company, market).material * Math.pow(0.95, upgrades.materialEfficiency) * Math.pow(0.98, upgrades.ecoProduction));
+  const unitPolicyCost = (market.producerTaxPerUnit || 0) - (market.producerSubsidyPerUnit || 0);
   let cumulativeQuantity = 0;
   return Array.from({ length: workerCount }, (_, index) => {
     const marginalProduct = calculateWorkerMarginalProduct(company, index + 1, machineCount, technologyLevel, market);
     cumulativeQuantity += marginalProduct;
     return {
       quantity: Math.floor(cumulativeQuantity),
-      marginalCost: Math.round(unitMaterialCost + market.wagePerWorker / marginalProduct),
+      marginalCost: Math.round(unitMaterialCost + unitPolicyCost + market.wagePerWorker / marginalProduct),
     };
   }).filter((point, index, points) => point.quantity > (points[index - 1]?.quantity ?? 0));
 };
@@ -132,18 +135,29 @@ export const calculateUpgradeCost = (market: Market, company: Company, type: Upg
 
 const marketMachineAssets = (company: Company, marketId: string) => (company.machineAssets || []).filter((asset) => asset.marketId === marketId);
 export const getMarketMachineCount = (company: Company, marketId: string) => 1 + (company.machineAssets || []).filter((asset) => asset.marketId === marketId || asset.marketId === '*').reduce((sum, asset) => sum + asset.quantity, 0);
-const resaleRate = (purchasedRound: number, currentRound: number) => Math.max(0.1, 0.5 - Math.max(0, currentRound - purchasedRound - 1) * 0.1);
+export const machineDepreciationRate = (asset: MachineAssetLot, currentRound: number) =>
+  Math.min(1, Math.max(0, currentRound - (asset.lastRepairedRound ?? asset.purchasedRound)) * 0.05);
+const resaleRate = (asset: MachineAssetLot, currentRound: number) =>
+  Math.max(0, 0.3 - Math.max(0, currentRound - asset.purchasedRound - 1) * 0.05);
+export const calculateMachineRepairCost = (company: Company, marketId: string, quantity: number, currentRound: number) =>
+  marketMachineAssets(company, marketId)
+    .filter((asset) => asset.purchasedRound < currentRound && machineDepreciationRate(asset, currentRound) > 0)
+    .sort((a, b) => machineDepreciationRate(b, currentRound) - machineDepreciationRate(a, currentRound))
+    .reduce((result, asset) => {
+      const repaired = Math.min(Math.max(0, quantity - result.count), asset.quantity);
+      return { count: result.count + repaired, cost: result.cost + Math.round(asset.purchasePrice * machineDepreciationRate(asset, currentRound) * 0.5) * repaired };
+    }, { count: 0, cost: 0 }).cost;
 export const calculateMachineResaleRevenue = (company: Company, marketId: string, quantity: number, currentRound: number) => {
   let remaining = quantity;
   return marketMachineAssets(company, marketId).filter((asset) => asset.purchasedRound < currentRound).sort((a, b) => a.purchasedRound - b.purchasedRound).reduce((sum, asset) => {
     const sold = Math.min(remaining, asset.quantity);
     remaining -= sold;
-    return sum + Math.round(asset.purchasePrice * resaleRate(asset.purchasedRound, currentRound)) * sold;
+    return sum + Math.round(asset.purchasePrice * resaleRate(asset, currentRound)) * sold;
   }, 0);
 };
 
 export const calculateLoanTerms = (company: Company, inventories: InventoryItem[], currentRound: number) => {
-  const machineCollateral = (company.machineAssets || []).reduce((sum, asset) => sum + Math.round(asset.purchasePrice * resaleRate(asset.purchasedRound, currentRound)) * asset.quantity, 0);
+  const machineCollateral = (company.machineAssets || []).reduce((sum, asset) => sum + Math.round(asset.purchasePrice * resaleRate(asset, currentRound)) * asset.quantity, 0);
   const inventoryCollateral = inventories.reduce((sum, item) => sum + Math.round(item.quantity * item.averageUnitCost * 0.5), 0);
   // 빌린 현금을 다시 담보로 삼아 반복 대출하는 것을 막기 위해 순현금만 인정한다.
   const recognizedAssets = Math.max(0, company.cash - (company.loanBalance || 0)) + machineCollateral + inventoryCollateral;
@@ -165,52 +179,68 @@ export const calculateProductionQuote = (
   includeSetupCost = false,
   currentRound = 1,
   machineSales = 0,
+  machineRepairs = 0,
 ): ProductionQuote => {
-  const marketMachineCountBefore = getMarketMachineCount(company, market.id);
+  const marketAssets = marketMachineAssets(company, market.id);
+  const activePurchasedMachines = marketAssets.filter((asset) => machineDepreciationRate(asset, currentRound) < 1).reduce((sum, asset) => sum + asset.quantity, 0);
+  const repairedExpiredMachines = marketAssets.filter((asset) => machineDepreciationRate(asset, currentRound) >= 1).sort((a, b) => a.purchasedRound - b.purchasedRound).reduce((result, asset) => {
+    const restored = Math.min(Math.max(0, machineRepairs - result.considered), asset.quantity);
+    return { considered: result.considered + asset.quantity, restored: result.restored + restored };
+  }, { considered: 0, restored: 0 }).restored;
+  // 최초 지급 기계 1대는 기존 데이터와의 호환을 위해 기본 설비로 유지한다.
+  const marketMachineCountBefore = 1 + activePurchasedMachines + repairedExpiredMachines;
   const machineCountAfter = marketMachineCountBefore + machinePurchases - machineSales;
   const upgradesAfter = { ...EMPTY_UPGRADES, ...(company.upgrades || {}) };
   if (upgradePurchase) upgradesAfter[upgradePurchase] += 1;
   const upgradedCompany = { ...company, upgrades: upgradesAfter };
   const technologyLevelAfter = company.technologyLevel || 0;
   const productionCapacity = calculateProductionCapacity(upgradedCompany, workerCount, machineCountAfter, technologyLevelAfter, market);
+  const landLimitedCapacity = market.landCapacityPerCycle
+    ? Math.min(productionCapacity, market.landCapacityPerCycle)
+    : productionCapacity;
   const currentMarginalProduct = calculateWorkerMarginalProduct(upgradedCompany, workerCount, machineCountAfter, technologyLevelAfter, market);
   const nextMarginalProduct = calculateWorkerMarginalProduct(upgradedCompany, workerCount + 1, machineCountAfter, technologyLevelAfter, market);
   const rentCost = calculateFacilityRent(market, machineCountAfter);
   const wageCost = market.wagePerWorker * workerCount;
   const unitMaterialCost = Math.round(market.materialUnitCost * market.materialCostMultiplier * getTechnologyMarketFit(upgradedCompany, market).material * Math.pow(0.95, upgradesAfter.materialEfficiency) * Math.pow(0.98, upgradesAfter.ecoProduction));
   const materialCost = unitMaterialCost * requestedQuantity;
-  const productionCost = rentCost + wageCost + materialCost;
+  const policyCost = ((market.producerTaxPerUnit || 0) - (market.producerSubsidyPerUnit || 0)) * requestedQuantity;
+  const productionCost = rentCost + wageCost + materialCost + policyCost;
+  const protectedWorkers = calculateMinimumWorkerCount(company, currentRound);
+  const earlyTerminationCost = Math.max(0, protectedWorkers - workerCount) * Math.round(market.wagePerWorker * 0.25);
   const machineInvestmentCost = market.machinePrice * machinePurchases;
   const upgradeCost = upgradePurchase ? calculateUpgradeCost(market, company, upgradePurchase, workerCount) : 0;
   const researchCost = upgradeCost;
   const setupCost = includeSetupCost ? market.initialSetupCost : 0;
   const machineResaleRevenue = calculateMachineResaleRevenue(company, market.id, machineSales, currentRound);
-  const investmentCost = machineInvestmentCost + researchCost + setupCost;
-  const totalCost = productionCost + investmentCost;
+  const machineRepairCost = calculateMachineRepairCost(company, market.id, machineRepairs, currentRound);
+  const investmentCost = machineInvestmentCost + researchCost + setupCost + machineRepairCost;
+  const totalCost = productionCost + investmentCost + earlyTerminationCost;
   const netCashCost = totalCost - machineResaleRevenue;
-  const existingMachineDepreciation = marketMachineAssets(company, market.id).reduce((sum, asset) => sum + Math.round(asset.purchasePrice * asset.quantity / 6), 0);
-  const depreciationCost = existingMachineDepreciation + Math.round(machineInvestmentCost / 6);
+  const existingMachineDepreciation = marketMachineAssets(company, market.id).filter((asset) => machineDepreciationRate(asset, currentRound) < 1).reduce((sum, asset) => sum + Math.round(asset.purchasePrice * asset.quantity * 0.05), 0);
+  const depreciationCost = existingMachineDepreciation + Math.round(machineInvestmentCost * 0.05);
   const allocatedInvestmentCost = depreciationCost + Math.round(researchCost / 3) + Math.round(setupCost / 4);
-  const economicCost = productionCost + allocatedInvestmentCost;
+  // 수리는 당기 설비 유지비이므로 현금지출뿐 아니라 당기 이윤에도 전액 반영한다.
+  const economicCost = productionCost + allocatedInvestmentCost + earlyTerminationCost + machineRepairCost;
   const supplyCurve = calculateFirmSupplyCurve(upgradedCompany, market, workerCount, machineCountAfter, technologyLevelAfter);
   const marginalCost = findFirmMarginalCost(supplyCurve, requestedQuantity);
-  const nextMarginalCost = requestedQuantity < productionCapacity ? findFirmMarginalCost(supplyCurve, requestedQuantity + 1) : null;
+  const nextMarginalCost = requestedQuantity < landLimitedCapacity ? findFirmMarginalCost(supplyCurve, requestedQuantity + 1) : null;
 
   return {
-    rentCost, wageCost, unitMaterialCost, materialCost, productionCost, machineInvestmentCost, researchCost, setupCost, investmentCost, totalCost,
+    rentCost, wageCost, unitMaterialCost, materialCost, policyCost, earlyTerminationCost, productionCost, machineInvestmentCost, researchCost, setupCost, investmentCost, totalCost,
     machineSales, machineResaleRevenue, netCashCost, marketMachineCountBefore,
-    producedQuantity: requestedQuantity, workerCount, productionCapacity, currentMarginalProduct, nextMarginalProduct,
+    producedQuantity: requestedQuantity, workerCount, productionCapacity: landLimitedCapacity, currentMarginalProduct, nextMarginalProduct,
     // 교육용 당기 평균비용: 이번 라운드의 생산비와 투자비를 모두 생산량에 배분한다.
     averageCost: requestedQuantity > 0 ? Math.round(economicCost / requestedQuantity) : 0,
     marginalCost, nextMarginalCost, supplyCurve, machineCountAfter, technologyLevelAfter,
     spendingLimit: company.cash, depreciationCost, allocatedInvestmentCost, economicCost,
-    upgradePurchased: upgradePurchase, upgradeCost, upgradesAfter,
+    upgradePurchased: upgradePurchase, upgradeCost, upgradesAfter, machineRepairCost, machineRepairs,
   };
 };
 
 interface ConfirmProductionInput {
   roomId: string; companyId: string; marketId: string; requestedQuantity: number;
-  workerCount: number; machinePurchases: number; machineSales?: number; researchLevels?: number; upgradePurchase?: UpgradeType | null; askingPrice?: number;
+  workerCount: number; machinePurchases: number; machineSales?: number; machineRepairs?: number; researchLevels?: number; upgradePurchase?: UpgradeType | null; askingPrice?: number; pricePrediction?: 'UP' | 'SAME' | 'DOWN';
 }
 
 const updateMachineAssets = (assets: MachineAssetLot[], marketId: string, sales: number, purchases: number, purchasePrice: number, roundNumber: number) => {
@@ -225,6 +255,22 @@ const updateMachineAssets = (assets: MachineAssetLot[], marketId: string, sales:
   return nextAssets;
 };
 
+const repairMachineAssets = (assets: MachineAssetLot[], marketId: string, repairs: number, roundNumber: number) => {
+  let remaining = repairs;
+  return assets.sort((a, b) => machineDepreciationRate(b, roundNumber) - machineDepreciationRate(a, roundNumber)).flatMap((asset) => {
+    if (asset.marketId !== marketId || remaining <= 0 || machineDepreciationRate(asset, roundNumber) <= 0) return [asset];
+    const repaired = Math.min(remaining, asset.quantity);
+    remaining -= repaired;
+    return [{ ...asset, quantity: repaired, lastRepairedRound: roundNumber }, ...(asset.quantity > repaired ? [{ ...asset, id: `${asset.id}-remaining-${roundNumber}`, quantity: asset.quantity - repaired }] : [])];
+  });
+};
+
+const deterministicChance = (seed: string) => {
+  let hash = 2166136261;
+  for (let index = 0; index < seed.length; index += 1) hash = Math.imul(hash ^ seed.charCodeAt(index), 16777619);
+  return (hash >>> 0) / 4294967296;
+};
+
 // Smooth exponential demand. At the base price, demand equals the configured
 // base quantity and the point elasticity equals the configured value.
 export const calculateMarketDemand = (market: Market, price: number, demandMultiplier = 1) => {
@@ -233,21 +279,29 @@ export const calculateMarketDemand = (market: Market, price: number, demandMulti
   return Math.max(0, Math.round(market.demandAtBasePrice * demandMultiplier * demandRatio));
 };
 
+export const scaleMarketEventFactor = (factor: number | undefined, effectScale: number) =>
+  1 + ((factor ?? 1) - 1) * effectScale;
+
 // 역공급함수 P(Q)=a+bQ+cQ²를 사용한다. Q가 늘수록 dP/dQ가 커져
 // 시장 전체의 한계비용도 완만하게 체증한다. 기준점에서의 탄력성은
 // market.supplyElasticity와 일치하도록 계수를 정한다.
 export const calculateRepresentativeMarketSupply = (market: Market, price: number) => {
   if (market.marketType !== 'PERFECT_COMPETITION') return 0;
+  // 종량세는 생산자가 실제로 받는 가격을 낮추고, 보조금은 높인다.
+  // 같은 정책 금액을 학생 기업 비용과 시장 전체 공급곡선에 함께 반영한다.
+  const supplyPrice = Math.max(0, price - (market.producerTaxPerUnit || 0) + (market.producerSubsidyPerUnit || 0));
   const baseQuantity = market.demandAtBasePrice;
   const basePrice = Math.max(1, market.basePrice);
 
   // 쌀은 생산을 시작하기 위한 최소 가격을 500원으로 두고,
-  // 기준점 (90,000포대, 5,000원)을 지나는 볼록한 2차 공급곡선을 사용한다.
+  // 기준점 (900,000kg, kg당 500원)을 지나는 볼록한 2차 공급곡선을 사용한다.
   if (market.id === 'market_toy') {
-    const intercept = 500;
-    if (price <= intercept) return 0;
+    // 포대(10kg) 기준 가격을 kg 기준으로 환산했으므로 공급 시작가격도
+    // 기존 500원에서 kg당 50원으로 같은 비율로 환산한다.
+    const intercept = 50;
+    if (supplyPrice <= intercept) return 0;
     const quadraticCoefficient = (basePrice - intercept) / (baseQuantity * baseQuantity);
-    return Math.sqrt((price - intercept) / quadraticCoefficient) * market.supplyShiftMultiplier;
+    return Math.sqrt((supplyPrice - intercept) / quadraticCoefficient) * market.supplyShiftMultiplier;
   }
 
   // 카페는 기준점과 공급탄력성 0.80을 유지하면서 2차항의 비중을 높인다.
@@ -257,8 +311,8 @@ export const calculateRepresentativeMarketSupply = (market: Market, price: numbe
     const intercept = 275;
     const linearCoefficient = 125 / baseQuantity;
     const quadraticCoefficient = 500 / (baseQuantity * baseQuantity);
-    if (price <= intercept) return 0;
-    const discriminant = linearCoefficient * linearCoefficient - 4 * quadraticCoefficient * (intercept - price);
+    if (supplyPrice <= intercept) return 0;
+    const discriminant = linearCoefficient * linearCoefficient - 4 * quadraticCoefficient * (intercept - supplyPrice);
     return Math.max(0, (-linearCoefficient + Math.sqrt(discriminant)) / (2 * quadraticCoefficient)) * market.supplyShiftMultiplier;
   }
 
@@ -270,8 +324,8 @@ export const calculateRepresentativeMarketSupply = (market: Market, price: numbe
   const quadraticCoefficient = curvatureShare * slopeAtEquilibrium / (2 * baseQuantity);
   const linearCoefficient = (1 - curvatureShare) * slopeAtEquilibrium;
   const intercept = basePrice - linearCoefficient * baseQuantity - quadraticCoefficient * baseQuantity * baseQuantity;
-  if (quadraticCoefficient <= 0) return Math.max(0, (Math.max(0, price) - intercept) / Math.max(0.000001, linearCoefficient)) * market.supplyShiftMultiplier;
-  const discriminant = linearCoefficient * linearCoefficient - 4 * quadraticCoefficient * (intercept - Math.max(0, price));
+  if (quadraticCoefficient <= 0) return Math.max(0, (supplyPrice - intercept) / Math.max(0.000001, linearCoefficient)) * market.supplyShiftMultiplier;
+  const discriminant = linearCoefficient * linearCoefficient - 4 * quadraticCoefficient * (intercept - supplyPrice);
   if (discriminant <= 0) return 0;
   return Math.max(0, (-linearCoefficient + Math.sqrt(discriminant)) / (2 * quadraticCoefficient)) * market.supplyShiftMultiplier;
 };
@@ -419,11 +473,13 @@ export const productionService = {
     });
   },
   confirmProduction: async (input: ConfirmProductionInput): Promise<ProductionPlan> => {
-    const { roomId, companyId, marketId, requestedQuantity, workerCount, machinePurchases, machineSales = 0, upgradePurchase = null } = input;
-    if (!Number.isInteger(requestedQuantity) || requestedQuantity <= 0) throw new Error('INVALID_PRODUCTION_QUANTITY');
+    const { roomId, companyId, marketId, requestedQuantity, workerCount, machinePurchases, machineSales = 0, machineRepairs = 0, upgradePurchase = null } = input;
+    if (!Number.isInteger(requestedQuantity) || requestedQuantity < 0) throw new Error('INVALID_PRODUCTION_QUANTITY');
     if (!Number.isInteger(workerCount) || workerCount < 1) throw new Error('INVALID_WORKER_COUNT');
     if (!Number.isInteger(machinePurchases) || machinePurchases < 0) throw new Error('INVALID_INVESTMENT');
+    if (machinePurchases > 1) throw new Error('MACHINE_PURCHASE_LIMIT');
     if (!Number.isInteger(machineSales) || machineSales < 0) throw new Error('INVALID_MACHINE_SALE');
+    if (!Number.isInteger(machineRepairs) || machineRepairs < 0) throw new Error('INVALID_MACHINE_REPAIR');
     if (upgradePurchase && !['advancedEquipment', 'workerTraining', 'materialEfficiency', 'ecoProduction'].includes(upgradePurchase)) throw new Error('INVALID_INVESTMENT');
 
     const roomRef = doc(db, 'rooms', roomId);
@@ -440,10 +496,12 @@ export const productionService = {
       if (room.roundPhase !== 'DECISION') throw new Error('ROUND_DECISION_CLOSED');
       const market = room.markets.find((item) => item.id === marketId);
       if (!market) throw new Error('MARKET_NOT_FOUND');
+      const isRice = market.id === 'market_toy';
+      if (!isRice && requestedQuantity === 0) throw new Error('INVALID_PRODUCTION_QUANTITY');
       if (!Number.isFinite(input.askingPrice) || (input.askingPrice || 0) <= 0) throw new Error('INVALID_ASKING_PRICE');
       const company = companySnapshot.data() as Company;
+      if (company.currentMarketId && company.currentMarketId !== market.id) throw new Error('MARKET_EXIT_REQUIRED');
       if (room.currentRound === 1 && company.traitsConfirmed === false) throw new Error('COMPANY_TRAITS_REQUIRED');
-      if (workerCount < calculateMinimumWorkerCount(company, room.currentRound)) throw new Error('WORKER_REDUCTION_NOT_ALLOWED');
       const planId = `${companyId}_${room.currentRound}`;
       const planRef = doc(db, 'rooms', roomId, 'productionPlans', planId);
       const inventoryRef = doc(db, 'rooms', roomId, 'companies', companyId, 'inventory', marketId);
@@ -457,39 +515,53 @@ export const productionService = {
       if (upgradePurchase && company.lastUpgradeRound === room.currentRound) throw new Error('UPGRADE_ALREADY_PURCHASED');
       if (upgradePurchase && (company.upgrades?.[upgradePurchase] || 0) >= 3) throw new Error('UPGRADE_MAX_LEVEL');
       if (machineSales > sellableMachines) throw new Error('INVALID_MACHINE_SALE');
-      const quote = calculateProductionQuote(company, market, requestedQuantity, workerCount, machinePurchases, upgradePurchase, !inventorySnapshot.exists(), room.currentRound, machineSales);
+      const riceCycleStartRound = room.currentRound - ((room.currentRound - 1) % Math.max(1, market.productionCycleRounds));
+      const riceCycleProduced = isRice && company.riceCycleStartRound === riceCycleStartRound ? company.riceCycleProducedQuantity || 0 : 0;
+      const landCapacity = market.landCapacityPerCycle || Number.POSITIVE_INFINITY;
+      if (isRice && requestedQuantity > landCapacity) throw new Error('LAND_CAPACITY_EXCEEDED');
+      const repairableMachines = marketMachineAssets(company, market.id).filter((asset) => asset.purchasedRound < room.currentRound && machineDepreciationRate(asset, room.currentRound) > 0).reduce((sum, asset) => sum + asset.quantity, 0);
+      if (machineRepairs > repairableMachines) throw new Error('INVALID_MACHINE_REPAIR');
+      const quote = calculateProductionQuote(company, market, requestedQuantity, workerCount, machinePurchases, upgradePurchase, !inventorySnapshot.exists(), room.currentRound, machineSales, machineRepairs);
       if (quote.machineCountAfter > market.maxMachines) throw new Error('FACILITY_LIMIT_EXCEEDED');
-      const savedTarget = company.productionTargets?.[market.id];
-      const canChangeProductionTarget = market.productionCycleRounds === 1 || (room.currentRound - 1) % market.productionCycleRounds === 0 || savedTarget === undefined;
-      if (!canChangeProductionTarget && requestedQuantity !== savedTarget) throw new Error('PRODUCTION_TARGET_LOCKED');
       if (quote.currentMarginalProduct <= 0) throw new Error('INVALID_WORKER_COUNT');
       if (requestedQuantity > quote.productionCapacity) throw new Error('PRODUCTION_CAPACITY_EXCEEDED');
       if (quote.netCashCost > quote.spendingLimit) throw new Error('SPENDING_LIMIT_EXCEEDED');
       if (company.cash < quote.netCashCost) throw new Error('INSUFFICIENT_CASH');
 
       const now = Date.now();
+      const disasterEvent = room.demandEvents.find((event) => event.marketId === market.id);
+      const disasterHit = isRice && (disasterEvent?.disasterLossChance || 0) > deterministicChance(`${roomId}:${companyId}:${room.currentRound}`);
+      const producedQuantity = disasterHit ? Math.max(0, Math.floor(requestedQuantity * (1 - (disasterEvent?.disasterLossRate || 0)))) : requestedQuantity;
       const previous = inventorySnapshot.exists() ? inventorySnapshot.data() as InventoryItem : null;
       const previousQuantity = previous?.quantity ?? 0;
-      const nextQuantity = previousQuantity + requestedQuantity;
+      const nextQuantity = previousQuantity + producedQuantity;
       const previousValue = previous ? previous.quantity * previous.averageUnitCost : 0;
+      const isRiceHarvestRound = isRice && room.currentRound % market.productionCycleRounds === 0;
       const inventory: InventoryItem = {
         productId: market.id, productName: market.name, productIcon: market.icon, quantity: nextQuantity,
-        averageUnitCost: Math.round((previousValue + quote.economicCost) / nextQuantity), updatedAt: now,
+        averageUnitCost: nextQuantity > 0 ? Math.round((previousValue + quote.economicCost) / nextQuantity) : 0, updatedAt: now,
       };
       const plan: ProductionPlan = {
         id: planId, roomId, companyId, productId: market.id, marketName: market.name, announcedPrice: market.announcedPrice,
-        roundNumber: room.currentRound, requestedQuantity, producedQuantity: requestedQuantity, workerCount,
+        roundNumber: room.currentRound, requestedQuantity, producedQuantity, workerCount,
         productionCapacity: quote.productionCapacity, marginalProduct: quote.currentMarginalProduct, marginalCost: quote.marginalCost,
         supplyCurve: quote.supplyCurve,
         rentCost: quote.rentCost, wageCost: quote.wageCost, materialCost: quote.materialCost, productionCost: quote.productionCost,
+        earlyTerminationCost: quote.earlyTerminationCost,
         machinePurchases, machineCountAfter: quote.machineCountAfter, researchLevels: 0, technologyLevelAfter: quote.technologyLevelAfter,
         upgradePurchased: quote.upgradePurchased, upgradeCost: quote.upgradeCost, upgradesAfter: quote.upgradesAfter,
         investmentCost: quote.investmentCost, totalCost: quote.totalCost, openingCash: company.cash, spendingLimit: quote.spendingLimit,
         depreciationCost: quote.depreciationCost, allocatedInvestmentCost: quote.allocatedInvestmentCost,
-        machineSales, machineResaleRevenue: quote.machineResaleRevenue,
-        askingPrice: input.askingPrice, offeredQuantity: requestedQuantity, soldQuantity: 0, marketPrice: null, revenue: 0,
+        machineSales, machineResaleRevenue: quote.machineResaleRevenue, machineRepairs, machineRepairCost: quote.machineRepairCost,
+        askingPrice: input.askingPrice, pricePrediction: input.pricePrediction || 'SAME', offeredQuantity: isRice ? (isRiceHarvestRound ? nextQuantity : 0) : producedQuantity, soldQuantity: 0, marketPrice: null, revenue: 0,
         profit: -quote.economicCost, operatingProfit: -quote.productionCost, economicProfit: -quote.economicCost,
         cashFlow: -quote.netCashCost, settlementStatus: 'PENDING',
+        ...(isRice ? {
+          riceCycleStage: isRiceHarvestRound ? 'HARVEST' as const : 'GROWING' as const,
+          riceCycleStartRound,
+          landCapacityPerCycle: market.landCapacityPerCycle,
+          disasterLossQuantity: requestedQuantity - producedQuantity,
+        } : {}),
         status: 'CONFIRMED', createdAt: now, confirmedAt: now,
       };
 
@@ -497,12 +569,14 @@ export const productionService = {
         cash: company.cash - quote.netCashCost,
         machineCount: 1 + (company.machineAssets || []).reduce((sum, asset) => sum + asset.quantity, 0) + machinePurchases - machineSales,
         employeeCount: workerCount,
-        lastHiringRound: workerCount > (company.employeeCount || 1) ? room.currentRound : (company.lastHiringRound ?? room.currentRound - 1),
-        machineAssets: updateMachineAssets(company.machineAssets || [], market.id, machineSales, machinePurchases, market.machinePrice, room.currentRound),
+        lastHiringRound: workerCount > (company.employeeCount || 1) ? room.currentRound : workerCount < (company.employeeCount || 1) ? room.currentRound - 1 : (company.lastHiringRound ?? room.currentRound - 1),
+        machineAssets: repairMachineAssets(updateMachineAssets(company.machineAssets || [], market.id, machineSales, machinePurchases, market.machinePrice, room.currentRound), market.id, machineRepairs, room.currentRound),
         technologyLevel: quote.technologyLevelAfter,
         upgrades: quote.upgradesAfter,
         lastUpgradeRound: upgradePurchase ? room.currentRound : (company.lastUpgradeRound || null),
-        productionTargets: canChangeProductionTarget ? { ...(company.productionTargets || {}), [market.id]: requestedQuantity } : company.productionTargets || {},
+        productionTargets: { ...(company.productionTargets || {}), [market.id]: requestedQuantity },
+        currentMarketId: market.id,
+        ...(isRice ? { riceCycleStartRound, riceCycleProducedQuantity: riceCycleProduced + producedQuantity } : {}),
       });
       transaction.set(inventoryRef, inventory);
       transaction.set(planRef, plan);
@@ -566,7 +640,10 @@ export const productionService = {
       const room = normalizeRoom(roomSnapshot.id, roomSnapshot.data() as Partial<Room>);
       const plan = planSnapshot.data() as ProductionPlan;
       if (room.roundPhase !== 'SELLING' || Date.now() >= (room.sellingEndsAt || 0)) throw new Error('PRICE_UPDATE_CLOSED');
-      if (nextPrice > (plan.askingPrice || plan.announcedPrice)) throw new Error('PRICE_INCREASE_NOT_ALLOWED');
+      const prediction = plan.pricePrediction || 'SAME';
+      const minimum = Math.max(100, plan.announcedPrice * (prediction === 'DOWN' ? 0.7 : prediction === 'SAME' ? 0.95 : 1));
+      const maximum = plan.announcedPrice * (prediction === 'UP' ? 1.3 : prediction === 'SAME' ? 1.05 : 1);
+      if (nextPrice < minimum || nextPrice > maximum) throw new Error('PRICE_OUT_OF_RANGE');
       transaction.update(planRef, { askingPrice: Math.round(nextPrice), updatedAt: Date.now() });
     });
   },
@@ -614,7 +691,8 @@ export const productionService = {
       const now = Date.now();
       const nextMarkets = room.markets.map((market) => {
         const marketPlans = plans.filter((plan) => plan.productId === market.id);
-          const demandMultiplier = room.demandEvents.find((event) => event.marketId === market.id)?.multiplier || 1;
+          const demandEvent = room.demandEvents.find((event) => event.marketId === market.id);
+          const demandMultiplier = demandEvent?.effectType === 'SUPPLY' ? 1 : scaleMarketEventFactor(demandEvent?.multiplier, market.demandEventEffectScale);
           const clearing = calculateMarketClearing(market, marketPlans, demandMultiplier);
         const resultRef = doc(db, 'rooms', roomId, 'marketResults', `${room.currentRound}_${market.id}`);
         const result: MarketRoundResult = {

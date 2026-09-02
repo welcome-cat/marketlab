@@ -122,6 +122,17 @@ const findLegacyCompanyId = async (roomId: string, companyName: string) => {
 };
 
 export const companyService = {
+  awardQuiz: async (roomId: string, companyId: string, roundNumber: number, reward = 20000): Promise<void> => {
+    const companyRef = doc(db, 'rooms', roomId, 'companies', companyId);
+    await runTransaction(db, async (transaction) => {
+      const snapshot = await transaction.get(companyRef);
+      if (!snapshot.exists()) throw new Error('COMPANY_NOT_FOUND');
+      const company = snapshot.data() as Company;
+      const completed = company.quizCompletedRounds || [];
+      if (completed.includes(roundNumber)) throw new Error('QUIZ_ALREADY_COMPLETED');
+      transaction.update(companyRef, { cash: company.cash + reward, quizCompletedRounds: [...completed, roundNumber] });
+    });
+  },
   /**
    * 학생 회사 등록 및 랜덤 기업 특성(Technology) 부여
    */
@@ -190,7 +201,8 @@ export const companyService = {
       }
 
       const room = roomSnapshot.data();
-      if ((room.status || 'WAITING') !== 'WAITING') {
+      // 결석 학생도 수업 도중 합류할 수 있다. 종료된 수업에만 새 회사를 막는다.
+      if ((room.status || 'WAITING') === 'FINISHED') {
         throw new Error('ROOM_NOT_JOINABLE');
       }
 
@@ -201,7 +213,7 @@ export const companyService = {
         roomId,
         name: trimmedName,
         normalizedName,
-        cash: 100000,
+        cash: 300000,
         technologyId: defaultTech.id,
         technologyName: defaultTech.name,
         technologyDescription: defaultTech.description,
@@ -247,7 +259,7 @@ export const companyService = {
       ]);
       if (!roomSnapshot.exists() || !companySnapshot.exists()) throw new Error('COMPANY_NOT_FOUND');
       const room = roomSnapshot.data();
-      if ((room.currentRound || 1) !== 1 || (room.roundPhase || 'DECISION') !== 'DECISION') throw new Error('TRAIT_SELECTION_CLOSED');
+      if ((room.status || 'WAITING') === 'FINISHED' || (room.roundPhase || 'DECISION') !== 'DECISION') throw new Error('TRAIT_SELECTION_CLOSED');
       transaction.update(companyRef, {
         industryTraitId: industry.id,
         industryTraitName: industry.name,
@@ -272,8 +284,49 @@ export const companyService = {
       const [roomSnapshot, companySnapshot] = await Promise.all([transaction.get(roomRef), transaction.get(companyRef)]);
       if (!roomSnapshot.exists() || !companySnapshot.exists()) throw new Error('COMPANY_NOT_FOUND');
       const room = roomSnapshot.data();
-      if ((room.currentRound || 1) !== 1 || (room.roundPhase || 'DECISION') !== 'DECISION') throw new Error('TRAIT_SELECTION_CLOSED');
+      if ((room.status || 'WAITING') === 'FINISHED' || (room.roundPhase || 'DECISION') !== 'DECISION') throw new Error('TRAIT_SELECTION_CLOSED');
       transaction.update(companyRef, { industryTraitId: industry.id, industryTraitName: industry.name, industryTraitDescription: industry.description, industryTraitIcon: industry.icon, traitsConfirmed: true });
+    });
+  },
+  changeIndustryTrait: async (roomId: string, companyId: string, industryTraitId: string): Promise<void> => {
+    const industry = INDUSTRY_TRAITS.find((item) => item.id === industryTraitId);
+    if (!industry) throw new Error('INVALID_COMPANY_TRAIT');
+    const roomRef = doc(db, 'rooms', roomId);
+    const companyRef = doc(db, 'rooms', roomId, 'companies', companyId);
+    await runTransaction(db, async (transaction) => {
+      const [roomSnapshot, companySnapshot] = await Promise.all([transaction.get(roomRef), transaction.get(companyRef)]);
+      if (!roomSnapshot.exists() || !companySnapshot.exists()) throw new Error('COMPANY_NOT_FOUND');
+      const room = roomSnapshot.data();
+      const company = companySnapshot.data() as Company;
+      if (room.roundPhase !== 'DECISION') throw new Error('TRAIT_SELECTION_CLOSED');
+      const conversionCost = 15000;
+      if (company.cash < conversionCost) throw new Error('INSUFFICIENT_CASH');
+      transaction.update(companyRef, { cash: company.cash - conversionCost, industryTraitId: industry.id, industryTraitName: industry.name, industryTraitDescription: industry.description, industryTraitIcon: industry.icon });
+    });
+  },
+  exitMarket: async (roomId: string, companyId: string, marketId: string): Promise<number> => {
+    const roomRef = doc(db, 'rooms', roomId);
+    const companyRef = doc(db, 'rooms', roomId, 'companies', companyId);
+    const inventoryRef = doc(db, 'rooms', roomId, 'companies', companyId, 'inventory', marketId);
+    return runTransaction(db, async (transaction) => {
+      const [roomSnapshot, companySnapshot, inventorySnapshot] = await Promise.all([transaction.get(roomRef), transaction.get(companyRef), transaction.get(inventoryRef)]);
+      if (!roomSnapshot.exists() || !companySnapshot.exists()) throw new Error('COMPANY_NOT_FOUND');
+      const room = roomSnapshot.data();
+      const company = companySnapshot.data() as Company;
+      if (room.roundPhase !== 'DECISION') throw new Error('MARKET_EXIT_CLOSED');
+      const round = Number(room.currentRound || 1);
+      const marketAssets = (company.machineAssets || []).filter((asset) => asset.marketId === marketId);
+      const machineRecovery = marketAssets.reduce((sum, asset) => {
+        const rate = Math.max(0, 0.3 - Math.max(0, round - asset.purchasedRound - 1) * 0.05);
+        return sum + Math.round(asset.purchasePrice * rate) * asset.quantity;
+      }, 0);
+      const inventory = inventorySnapshot.exists() ? inventorySnapshot.data() as { quantity?: number; averageUnitCost?: number } : null;
+      const inventoryRecovery = Math.round((inventory?.quantity || 0) * (inventory?.averageUnitCost || 0) * 0.5);
+      const recovery = machineRecovery + inventoryRecovery;
+      const remainingAssets = (company.machineAssets || []).filter((asset) => asset.marketId !== marketId);
+      transaction.update(companyRef, { cash: company.cash + recovery, machineAssets: remainingAssets, machineCount: 1 + remainingAssets.reduce((sum, asset) => sum + asset.quantity, 0), currentMarketId: null });
+      if (inventorySnapshot.exists()) transaction.update(inventoryRef, { quantity: 0, updatedAt: Date.now() });
+      return recovery;
     });
   },
 

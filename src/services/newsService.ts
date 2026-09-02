@@ -21,7 +21,7 @@ const signals: Record<string, string[]> = {
 };
 
 const makeTemplateArticle = (market: Market, option: DemandEventOption): NewsArticle => {
-  const candidates = signals[option.id] || signals.baseline;
+  const candidates = signals[option.id] || [option.description];
   const signal = candidates[Math.floor(Math.random() * candidates.length)];
   const prefixes = ['생활경제', '유통가 소식', '시장 동향', '오늘의 산업'];
   const suffixes = ['업계는 당분간 소비자 반응을 지켜볼 필요가 있다고 전했다.', '판매 현장에서는 다음 주 움직임에 관심을 기울이고 있다.', '전문가들은 기업마다 상황을 다르게 해석할 수 있다고 덧붙였다.'];

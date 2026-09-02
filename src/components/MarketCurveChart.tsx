@@ -12,13 +12,15 @@ export const MarketCurveChart: React.FC<Props> = ({ market, plans, demandMultipl
   const margin = { left: 76, right: 20, top: 22, bottom: 58 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
-  const quantityUnit = market.id === 'market_toy' ? '포대' : '개';
+  const quantityUnit = market.id === 'market_toy' ? 'kg' : '개';
   const studentSupply = plans.reduce((sum, plan) => sum + plan.producedQuantity, 0);
   const competitiveMarket = calculateCompetitiveMarket(market, studentSupply, demandMultiplier);
   const shutdownPrice = Math.round(market.materialUnitCost * market.materialCostMultiplier + market.wagePerWorker / Math.max(1, market.firstWorkerProductivity));
   const backgroundSupply = (price: number) => calculateRepresentativeMarketSupply(market, price);
   const totalSupply = (price: number) => backgroundSupply(price) + (backgroundSupply(price) > 0 ? competitiveMarket.effectiveStudentSupply : 0);
-  const minPrice = market.id === 'market_toy' ? 1000 : 300;
+  // 쌀은 kg당 가격으로 표시하므로 기존 포대 기준 축 최솟값 1,000원도
+  // 같은 비율로 환산한다.
+  const minPrice = market.id === 'market_toy' ? 100 : 300;
   const equilibriumPrice = Math.max(minPrice + 10, competitiveMarket.marketPrice);
   const maxPrice = equilibriumPrice * 2 - minPrice;
   const equilibriumQuantity = calculateMarketDemand(market, competitiveMarket.marketPrice, demandMultiplier);
@@ -29,7 +31,7 @@ export const MarketCurveChart: React.FC<Props> = ({ market, plans, demandMultipl
   const quantityTicks = Array.from({ length: 5 }, (_, index) => maxQuantity * index / 4);
   const demandPrices = Array.from({ length: 31 }, (_, index) => minPrice + (maxPrice - minPrice) * index / 30);
   const demandPath = demandPrices.map((price, index) => `${index === 0 ? 'M' : 'L'} ${x(calculateMarketDemand(market, price, demandMultiplier))} ${y(price)}`).join(' ');
-  // 카페는 기존의 균등 표본 2차곡선을 유지한다. 쌀만 500원 부근의
+  // 카페는 기존의 균등 표본 2차곡선을 유지한다. 쌀만 kg당 500원 부근의
   // 곡률을 잘 보여주도록 낮은 가격 구간을 더 촘촘히 표본화한다.
   const isRiceMarket = market.id === 'market_toy';
   const supplyPointCount = isRiceMarket ? 61 : 31;
