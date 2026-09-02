@@ -7,16 +7,19 @@ interface Props {
   quantityUnit: string;
   title?: string;
   compact?: boolean;
+  marketPrice?: number;
+  showCurve?: boolean;
+  showSurplus?: boolean;
 }
 
-export const FirmSupplyCurve: React.FC<Props> = ({ points, selectedQuantity, selectedMarginalCost, quantityUnit, title = '우리 기업의 공급량', compact = false }) => {
+export const FirmSupplyCurve: React.FC<Props> = ({ points, selectedQuantity, selectedMarginalCost, quantityUnit, title = '우리 기업의 공급량', compact = false, marketPrice, showCurve = true, showSurplus = false }) => {
   if (points.length === 0) return null;
   const width = compact ? 240 : 520;
   const height = compact ? 150 : 260;
   const margin = compact ? { left: 52, right: 12, top: 16, bottom: 34 } : { left: 72, right: 20, top: 22, bottom: 48 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
-  const costs = points.map((point) => point.marginalCost);
+  const costs = [...points.map((point) => point.marginalCost), ...(marketPrice ? [marketPrice] : [])];
   const rawMinCost = Math.min(...costs);
   const rawMaxCost = Math.max(...costs);
   const costPadding = Math.max(10, (rawMaxCost - rawMinCost) * 0.12);
@@ -29,6 +32,12 @@ export const FirmSupplyCurve: React.FC<Props> = ({ points, selectedQuantity, sel
   const chosenCost = selectedMarginalCost ?? points.find((point) => chosenQuantity <= point.quantity)?.marginalCost;
   const priceTicks = [minCost, (minCost + maxCost) / 2, maxCost];
   const quantityTicks = [0, maxQuantity / 2, maxQuantity];
+  const curvePoints = [{ quantity: 0, marginalCost: points[0].marginalCost }, ...points];
+  const surplusPoints = marketPrice === undefined ? '' : [
+    `${x(0)},${y(marketPrice)}`,
+    ...curvePoints.filter((point) => point.quantity <= chosenQuantity && point.marginalCost <= marketPrice).map((point) => `${x(point.quantity)},${y(point.marginalCost)}`),
+    `${x(chosenQuantity)},${y(marketPrice)}`,
+  ].join(' ');
 
   return <div style={{ minWidth: 0 }}>
     <strong style={{ display: 'block', fontSize: compact ? '12px' : '14px', marginBottom: '4px' }}>{title}</strong>
@@ -36,10 +45,13 @@ export const FirmSupplyCurve: React.FC<Props> = ({ points, selectedQuantity, sel
       <rect x={margin.left} y={margin.top} width={innerWidth} height={innerHeight} fill="#fff" stroke="#cbd5e1" />
       {priceTicks.map((cost) => <g key={cost}><line x1={margin.left} y1={y(cost)} x2={width - margin.right} y2={y(cost)} stroke="#eef2f7" /><text x={margin.left - 6} y={y(cost) + 4} textAnchor="end" fontSize={compact ? 8 : 10} fill="#475569">{Math.round(cost).toLocaleString()}원</text></g>)}
       {quantityTicks.map((quantity) => <g key={quantity}><line x1={x(quantity)} y1={margin.top} x2={x(quantity)} y2={height - margin.bottom} stroke="#f1f5f9" /><text x={x(quantity)} y={height - margin.bottom + 16} textAnchor="middle" fontSize={compact ? 8 : 10} fill="#475569">{Math.round(quantity).toLocaleString()}</text></g>)}
+      {showSurplus && marketPrice !== undefined && chosenQuantity > 0 && <><polygon points={surplusPoints} fill="#60a5fa" opacity="0.35" /><line x1={margin.left} y1={y(marketPrice)} x2={x(chosenQuantity)} y2={y(marketPrice)} stroke="#2563eb" strokeWidth="2" strokeDasharray="5 3" /><text x={margin.left + 5} y={y(marketPrice) - 5} fontSize="10" fill="#1d4ed8">시장가격</text></>}
+      {showCurve && <polyline points={curvePoints.map((point) => `${x(point.quantity)},${y(point.marginalCost)}`).join(' ')} fill="none" stroke="#2563eb" strokeWidth="3" strokeLinejoin="round" />}
       {chosenQuantity > 0 && chosenCost !== undefined && <><line x1={x(chosenQuantity)} y1={y(chosenCost)} x2={x(chosenQuantity)} y2={height - margin.bottom} stroke="#f59e0b" strokeDasharray="4 3" /><circle cx={x(chosenQuantity)} cy={y(chosenCost)} r={compact ? 3 : 5} fill="#f59e0b" /></>}
       <text x={margin.left - 4} y={margin.top - 6} textAnchor="end" fontSize={compact ? 8 : 10} fontWeight="700">P 한계비용</text>
       <text x={width - margin.right} y={height - 5} textAnchor="end" fontSize={compact ? 8 : 10} fontWeight="700">Q 생산량({quantityUnit})</text>
     </svg>
     {!compact && chosenQuantity > 0 && chosenCost !== undefined && <strong style={{ display: 'block', color: '#b45309', fontSize: '13px' }}>● 우리 기업의 희망 공급량 {chosenQuantity.toLocaleString()}{quantityUnit} · 한계비용 {chosenCost.toLocaleString()}원</strong>}
+    {!compact && showSurplus && marketPrice !== undefined && chosenCost !== undefined && <small style={{ display: 'block', color: '#1d4ed8', marginTop: '4px' }}>파란 영역은 시장가격과 각 생산단위의 한계비용 차이입니다. 현재 마지막 1{quantityUnit}의 추가이윤은 약 {Math.max(0, marketPrice - chosenCost).toLocaleString()}원입니다.</small>}
   </div>;
 };

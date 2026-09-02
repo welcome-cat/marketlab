@@ -120,6 +120,8 @@ export const StudentPage: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [quizOpen, setQuizOpen] = useState(false);
+  const [showSupplyCurve, setShowSupplyCurve] = useState(true);
+  const [showProducerSurplus, setShowProducerSurplus] = useState(false);
   const [clock, setClock] = useState(0);
   const [reflection, setReflection] = useState<LearningReflection | null>(null);
   const [reflectionAnswers, setReflectionAnswers] = useState({ marginalProductObservation: '', marketChangeObservation: '', nextStrategy: '' });
@@ -325,7 +327,7 @@ export const StudentPage: React.FC = () => {
     try { await companyService.awardQuiz(roomId, company.id, room.currentRound); setQuizOpen(false); setMessage('정답입니다! 운영자금 20,000원을 확보했습니다.'); }
     catch { setMessage('이번 라운드의 퀴즈 보상은 이미 받았습니다.'); }
   };
-  const applyAskingPrice = async () => { if (!plan) return; try { await productionService.updateAskingPrice(roomId, company.id, room.currentRound, askingPrice); setMessage('변경한 가격이 판매 속도와 예상 판매량에 반영되었습니다.'); } catch (reason) { setMessage(reason instanceof Error && reason.message === 'PRICE_OUT_OF_RANGE' ? `가격은 최초 공개가격의 50~200% 범위에서 조정할 수 있습니다.` : '30초 판매시간이 끝나 가격을 변경할 수 없습니다.'); } };
+  const applyAskingPrice = async () => { if (!plan) return; try { await productionService.updateAskingPrice(roomId, company.id, room.currentRound, askingPrice); setMessage('변경한 가격이 판매 속도와 예상 판매량에 반영되었습니다.'); } catch (reason) { setMessage(reason instanceof Error && reason.message === 'PRICE_OUT_OF_RANGE' ? '선택한 예측 방향의 허용 범위 안에서만 가격을 조정할 수 있습니다.' : '30초 판매시간이 끝나 가격을 변경할 수 없습니다.'); } };
   const submitReflection = async () => {
     if (!reflectionAnswers.marginalProductObservation.trim() || !reflectionAnswers.marketChangeObservation.trim() || !reflectionAnswers.nextStrategy.trim()) return setMessage('활동지의 세 문항을 모두 작성해주세요.');
     await reflectionService.save({ roomId, companyId: company.id, companyName: company.name, roundNumber: room.currentRound, ...reflectionAnswers });
@@ -458,7 +460,8 @@ export const StudentPage: React.FC = () => {
             </label>
           </div>
           <div style={{ marginTop: '10px', padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
-            <FirmSupplyCurve points={quote.supplyCurve} selectedQuantity={plannedProductionQty} selectedMarginalCost={quote.marginalCost} quantityUnit={quantityUnit} />
+            <div style={{ display: 'flex', gap: '7px', marginBottom: '8px', flexWrap: 'wrap' }}><button type="button" onClick={() => setShowSupplyCurve((value) => !value)} aria-pressed={showSupplyCurve}>{showSupplyCurve ? '공급곡선 숨기기' : '공급곡선 전체보기'}</button><button type="button" onClick={() => setShowProducerSurplus((value) => !value)} aria-pressed={showProducerSurplus}>{showProducerSurplus ? '1개당 판매 이윤 숨기기' : '1개당 판매 이윤 보기'}</button></div>
+            <FirmSupplyCurve points={quote.supplyCurve} selectedQuantity={plannedProductionQty} selectedMarginalCost={quote.marginalCost} quantityUnit={quantityUnit} marketPrice={selectedClearing.marketPrice} showCurve={showSupplyCurve} showSurplus={showProducerSurplus} />
           </div>
           {plannedProductionQty > cashLimitedCapacity && <p style={{ color: '#dc2626', fontSize: '13px' }}>⚠️ 현재 선택은 보유현금을 초과합니다. 희망 공급량을 현금 한도 안으로 낮춰주세요.</p>}
           {quote.currentMarginalProduct === 0 && <p style={{ color: '#dc2626', fontSize: '13px' }}>⚠️ 자본설비에 비해 노동자가 너무 많아 마지막 노동자의 한계생산이 0입니다. 이 고용량으로는 생산을 확정할 수 없습니다.</p>}
