@@ -505,7 +505,7 @@ export const StudentPage: React.FC = () => {
       <p style={{ fontSize: '13px', color: '#475569' }}>선택한 투자는 이번 생산계획부터 적용되고 이후 라운드에도 유지됩니다. 고급 설비는 기계가 여러 대일수록 효과가 커집니다.</p>
     </section>
 
-    <section className="student-production" style={{ ...card, border: '2px solid #2563eb' }}><h2 style={{ marginTop: 0, fontSize: '18px' }}>고용과 생산 결정</h2>
+    <section className="student-production" style={{ ...card, border: '2px solid #2563eb' }}><h2 style={{ marginTop: 0, fontSize: '18px' }}>고용과 생산 결정</h2><div className="production-reference-price"><span>{room.currentRound === 1 ? '초기 기준가격' : '이전 라운드 거래가격'}</span><strong>{publicReferencePrice.toLocaleString()}원/{quantityUnit}</strong></div>
       {isRiceMarket && <div style={{ marginBottom: '13px', padding: '12px', borderRadius: '10px', background: isRiceHarvestRound ? '#fef3c7' : '#ecfdf5', color: isRiceHarvestRound ? '#92400e' : '#166534' }}><strong>{isRiceHarvestRound ? '🌾 수확·판매 라운드' : `🌱 재배 ${room.currentRound - riceCycleStartRound + 1}/3라운드`}</strong><small style={{ display: 'block', marginTop: '4px' }}>1포대=10kg · 라운드마다 새로 적용되는 농지 한도 {riceLandCapacity}kg · 이번 주기 누적 생산 {riceCycleProduced}kg{isRiceHarvestRound ? ` · 현재 재배 물량과 이번 생산분을 합쳐 판매합니다.` : ' · 생산물은 주기 마지막 라운드까지 재배됩니다.'}</small></div>}
       <label>총 고용 노동자 수<input type="number" min="1" max={cashLimitedWorkerCount} step="1" value={workerCount} disabled={Boolean(plan)} onChange={(e) => setWorkerCount(Math.max(1, Math.min(cashLimitedWorkerCount, Math.floor(Number(e.target.value) || 1))))} style={{ width: '100%', padding: '10px', marginTop: '6px' }} /><small style={{ display: 'block', marginTop: '5px', color: '#64748b' }}>기존 {company.employeeCount || 1}명 · 보호 고용 {minimumWorkerCount}명 · 추가고용 {Math.max(0, workerCount - (company.employeeCount || 1))}명 · 1명당 {selectedMarket.wagePerWorker.toLocaleString()}원 · 총임금 <strong style={{ color: '#7c3aed' }}>{quote.wageCost.toLocaleString()}원</strong>{quote.earlyTerminationCost > 0 && <> · 조기퇴직 보상 <strong style={{ color: '#dc2626' }}>{quote.earlyTerminationCost.toLocaleString()}원</strong></>}</small></label>
       <div className="production-workspace">
@@ -513,16 +513,16 @@ export const StudentPage: React.FC = () => {
           <div style={{ padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
             <div style={{ display: 'block', fontSize: '13px', fontWeight: 700 }}>우리 기업의 희망 공급량
               <span style={{ display: 'grid', gridTemplateColumns: '34px minmax(0,1fr) 34px', gap: '8px', alignItems: 'center', marginTop: '8px' }}>
-                <button type="button" aria-label="희망 공급량 1단위 감소" disabled={Boolean(plan) || plannedProductionQty <= (isRiceMarket ? 0 : 1)} onClick={() => setProductionQty((current) => Math.max(isRiceMarket ? 0 : 1, current - 1))} style={{ width: '34px', height: '34px', padding: 0, fontWeight: 900 }}>◀</button>
+                <button className="supply-step-button" type="button" aria-label="희망 공급량 1단위 감소" disabled={Boolean(plan) || plannedProductionQty <= (isRiceMarket ? 0 : 1)} onClick={() => setProductionQty((current) => Math.max(isRiceMarket ? 0 : 1, current - 1))}>−</button>
                 <input aria-label="우리 기업의 희망 공급량" type="range" min={isRiceMarket ? 0 : 1} max={Math.max(isRiceMarket ? 0 : 1, cashLimitedCapacity)} step="1" value={Math.min(plannedProductionQty, Math.max(isRiceMarket ? 0 : 1, cashLimitedCapacity))} disabled={Boolean(plan) || cashLimitedCapacity < (isRiceMarket ? 0 : 1)} onChange={(event) => setProductionQty(Number(event.target.value))} style={{ width: '100%' }} />
-                <button type="button" aria-label="희망 공급량 1단위 증가" disabled={Boolean(plan) || plannedProductionQty >= cashLimitedCapacity} onClick={() => setProductionQty((current) => Math.min(cashLimitedCapacity, current + 1))} style={{ width: '34px', height: '34px', padding: 0, fontWeight: 900 }}>▶</button>
+                <button className="supply-step-button" type="button" aria-label="희망 공급량 1단위 증가" disabled={Boolean(plan) || plannedProductionQty >= cashLimitedCapacity} onClick={() => setProductionQty((current) => Math.min(cashLimitedCapacity, current + 1))}>＋</button>
               </span>
               <span style={{ display: 'flex', justifyContent: 'space-between', color: '#64748b', fontWeight: 400 }}><small>{isRiceMarket ? 0 : 1}{quantityUnit}</small><strong style={{ color: '#b45309' }}>{Math.min(plannedProductionQty, cashLimitedCapacity).toLocaleString()}{quantityUnit}</strong><small>{isRiceMarket ? '토지·현금 한도' : '현금 한도'} {cashLimitedCapacity.toLocaleString()}{quantityUnit}</small></span>
             </div>
           </div>
           <div style={{ marginTop: '10px', padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
-            <div style={{ display: 'flex', gap: '7px', marginBottom: '8px', flexWrap: 'wrap' }}><button type="button" onClick={() => setShowSupplyCurve((value) => !value)} aria-pressed={showSupplyCurve}>{showSupplyCurve ? '공급곡선 숨기기' : '공급곡선 전체보기'}</button><button type="button" onClick={() => setShowProducerSurplus((value) => !value)} aria-pressed={showProducerSurplus}>{showProducerSurplus ? '1개당 판매 이윤 숨기기' : '1개당 판매 이윤 보기'}</button></div>
-            <FirmSupplyCurve points={quote.supplyCurve} selectedQuantity={plannedProductionQty} selectedMarginalCost={quote.marginalCost} quantityUnit={quantityUnit} marketPrice={publicReferencePrice} marketPriceLabel={room.currentRound === 1 ? '초기 기준가격' : '이전 거래가격'} showCurve={showSupplyCurve} showSurplus={showProducerSurplus} />
+            <div className="curve-toggle-actions"><button type="button" onClick={() => setShowSupplyCurve((value) => !value)} aria-pressed={showSupplyCurve}>{showSupplyCurve ? '📉 공급곡선 숨기기' : '📈 공급곡선 전체보기'}</button><button type="button" onClick={() => setShowProducerSurplus((value) => !value)} aria-pressed={showProducerSurplus}>{showProducerSurplus ? '💰 1개당 판매 이윤 숨기기' : '💰 1개당 판매 이윤 보기'}</button></div>
+            <FirmSupplyCurve points={quote.supplyCurve} selectedQuantity={plannedProductionQty} selectedMarginalCost={quote.marginalCost} quantityUnit={quantityUnit} marketPrice={publicReferencePrice} marketPriceLabel={room.currentRound === 1 ? '초기 기준가격' : '이전 라운드 거래가격'} showCurve={showSupplyCurve} showSurplus={showProducerSurplus} />
           </div>
           {plannedProductionQty > cashLimitedCapacity && <p style={{ color: '#dc2626', fontSize: '13px' }}>⚠️ 현재 선택은 보유현금을 초과합니다. 희망 공급량을 현금 한도 안으로 낮춰주세요.</p>}
           {quote.currentMarginalProduct === 0 && <p style={{ color: '#dc2626', fontSize: '13px' }}>⚠️ 자본설비에 비해 노동자가 너무 많아 마지막 노동자의 한계생산이 0입니다. 이 고용량으로는 생산을 확정할 수 없습니다.</p>}
@@ -602,7 +602,9 @@ export const StudentPage: React.FC = () => {
     </div>
     </div>
 
+    {room.roundPhase === 'RESULT' && reflectionDue && <div className="student-reflection-shell">
     {room.roundPhase === 'RESULT' && reflectionDue && <section style={{ ...card, border: '2px solid #0f766e', background: '#f0fdfa' }}><h2 style={{ marginTop: 0, fontSize: '18px' }}>📝 {currentReflectionSheet.title}</h2><small style={{ color: '#64748b' }}>{reflectionInterval}라운드마다 제출</small>{reflection ? <p style={{ color: '#0f766e', fontWeight: 700 }}>Round {reflection.roundNumber} 활동지를 제출했습니다.</p> : <div style={{ display: 'grid', gap: '10px', marginTop: '12px' }}>{currentReflectionSheet.questions.map((question, index) => <label key={question.id}>{index + 1}. {question.prompt}<textarea value={reflectionAnswers[question.id] || ''} onChange={(event) => setReflectionAnswers((current) => ({ ...current, [question.id]: event.target.value }))} rows={3} style={{ width: '100%', marginTop: '5px' }} /></label>)}<button onClick={submitReflection} style={{ padding: '11px', background: '#0f766e', color: '#fff', border: 0, borderRadius: '8px', fontWeight: 800 }}>활동지 제출</button></div>}</section>}
+    </div>}
 
   </main></div>;
 };

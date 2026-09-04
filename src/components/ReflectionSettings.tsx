@@ -25,7 +25,6 @@ export const ReflectionSettings: React.FC<ReflectionSettingsProps> = ({ interval
   };
 
   return <div className="reflection-settings">
-    <h3 style={{ marginTop: 0 }}>📝 경제 활동지 설정</h3>
     <p style={{ color: '#64748b', fontSize: '13px' }}>지정한 라운드 간격마다 활동지가 열립니다. 활동지가 여러 개면 제출 차례에 따라 순서대로 반복됩니다.</p>
     <label>제출 주기
       <span className="reflection-interval"><input type="number" min="1" max="20" step="1" value={draftInterval} onChange={(event) => setDraftInterval(Math.max(1, Math.min(20, Math.floor(Number(event.target.value) || 1))))} />라운드마다</span>
