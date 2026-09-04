@@ -26,6 +26,55 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* 전역 버튼 및 대화형 요소 커서 & 누름(Press) 피드백 */
+button,
+summary,
+[role='button'] {
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  transition: transform 0.1s ease, filter 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+
+button:hover:not(:disabled),
+summary:hover,
+[role='button']:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+button:active:not(:disabled),
+summary:active,
+[role='button']:active:not(:disabled) {
+  transform: scale(0.96) translateY(1px);
+  filter: brightness(0.92);
+}
+
+button:disabled,
+[role='button']:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.2);
+  opacity: 0.55;
+  transform: none !important;
+}
+
+/* 주요 카드형 선택 버튼(시장 선택, 기업 업그레이드 등) 호버/액티브 강화 */
+.student-market button,
+.student-investment button {
+  transition: transform 0.12s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.student-market button:hover:not(:disabled),
+.student-investment button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+.student-market button:active:not(:disabled),
+.student-investment button:active:not(:disabled) {
+  transform: scale(0.97);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+}
+
 .teacher-readonly-banner {
   position: sticky;
   top: 0;
