@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { FirmSupplyCurve } from '../components/FirmSupplyCurve';
 import { ConceptHelp } from '../components/ConceptHelp';
 import { StudentRosterEditor } from '../components/StudentRosterEditor';
+import { TouchStepper } from '../components/TouchStepper';
 import { calculateLoanTerms, calculateMachineRepairCost, calculateMarketClearing, calculateMinimumWorkerCount, calculateProductionQuote, companyService, getTechnologyMarketFit, machineDepreciationRate, productionService, reflectionService, roomService, scaleMarketEventFactor } from '../services';
 import type { Company, InventoryItem, LearningReflection, Market, ProductionPlan, Room, UpgradeType } from '../types/domain';
 import { DEFAULT_REFLECTION_SHEETS, EVENT_INTENSITY_SCALE, INDUSTRY_TRAITS, INITIAL_COMPANY_CASH, UPGRADE_OPTIONS } from '../types/domain';
@@ -487,19 +488,43 @@ export const StudentPage: React.FC = () => {
     <div className="student-decision-left">
     <section className="student-investment" style={card}><h2 style={{ marginTop: 0, fontSize: '18px' }}>설비와 기술에 투자할 것인가?</h2>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '-2px 0 12px', padding: '10px 12px', background: '#eff6ff', borderRadius: '9px', color: '#1e3a8a' }}><span>현재 {selectedMarket.name} 기존 {selectedMarket.id === 'market_toy' ? '농기계' : '기계'}</span><strong>{quote.marketMachineCountBefore}대</strong></div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '12px' }}>
-        <label style={{ padding: '14px', background: '#f8fafc', borderRadius: '10px' }}>새 {selectedMarket.id === 'market_toy' ? '농기계' : '기계'} 구입 대수
-          <input type="number" min="0" max="2" step="1" value={room.currentRound < room.unlockRounds.machines ? 0 : machinePurchases} disabled={Boolean(plan) || room.currentRound < room.unlockRounds.machines} onChange={(e) => setMachinePurchases(Math.max(0, Math.min(2, Math.floor(Number(e.target.value) || 0))))} style={{ width: '100%', marginTop: '8px', padding: '9px' }} />
-          <small>{room.currentRound < room.unlockRounds.machines ? `🔒 Round ${room.unlockRounds.machines}부터 기계 투자가 열립니다.` : `1대 ${selectedMarket.machinePrice.toLocaleString()}원 · 구입 후 ${quote.machineCountAfter}/${selectedMarket.maxMachines}대 · 라운드 임대료 ${quote.rentCost.toLocaleString()}원`}</small>
-        </label>
-        <label style={{ padding: '14px', background: '#f8fafc', borderRadius: '10px' }}>기존 {selectedMarket.id === 'market_toy' ? '농기계' : '기계'} 매각 대수
-          <input type="number" min="0" max={sellableMachineCount} step="1" value={machineSales} disabled={Boolean(plan) || room.currentRound < room.unlockRounds.machines} onChange={(e) => setMachineSales(Math.max(0, Math.min(sellableMachineCount, Math.floor(Number(e.target.value) || 0))))} style={{ width: '100%', marginTop: '8px', padding: '9px' }} />
-          <small>매각 가능 {sellableMachineCount}대 · 예상 유입 {quote.machineResaleRevenue.toLocaleString()}원</small>
-        </label>
-        <label style={{ padding: '14px', background: '#f8fafc', borderRadius: '10px' }}>기계 수리 대수
-          <input type="number" min="0" max={repairableMachines} step="1" value={machineRepairs} disabled={Boolean(plan) || room.currentRound < room.unlockRounds.machines} onChange={(e) => setMachineRepairs(Math.max(0, Math.min(repairableMachines, Math.floor(Number(e.target.value) || 0))))} style={{ width: '100%', marginTop: '8px', padding: '9px' }} />
-          <small>수리 가능 {repairableMachines}대 · 감가율에 비례한 수리비 {calculateMachineRepairCost(company, selectedMarket.id, machineRepairs, room.currentRound).toLocaleString()}원</small>
-        </label>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: '12px' }}>
+        <TouchStepper
+          label={`새 ${selectedMarket.id === 'market_toy' ? '농기계' : '기계'} 구입`}
+          value={room.currentRound < room.unlockRounds.machines ? 0 : machinePurchases}
+          min={0}
+          max={2}
+          step={1}
+          unit="대"
+          color="blue"
+          disabled={Boolean(plan) || room.currentRound < room.unlockRounds.machines}
+          onChange={(val) => setMachinePurchases(val)}
+          description={room.currentRound < room.unlockRounds.machines ? `🔒 Round ${room.unlockRounds.machines}부터 기계 투자가 열립니다.` : `1대 ${selectedMarket.machinePrice.toLocaleString()}원 · 구입 후 ${quote.machineCountAfter}/${selectedMarket.maxMachines}대 · 라운드 임대료 ${quote.rentCost.toLocaleString()}원`}
+        />
+        <TouchStepper
+          label={`기존 ${selectedMarket.id === 'market_toy' ? '농기계' : '기계'} 매각`}
+          value={machineSales}
+          min={0}
+          max={sellableMachineCount}
+          step={1}
+          unit="대"
+          color="amber"
+          disabled={Boolean(plan) || room.currentRound < room.unlockRounds.machines || sellableMachineCount === 0}
+          onChange={(val) => setMachineSales(val)}
+          description={`매각 가능 ${sellableMachineCount}대 · 예상 유입 ${quote.machineResaleRevenue.toLocaleString()}원`}
+        />
+        <TouchStepper
+          label="기계 수리"
+          value={machineRepairs}
+          min={0}
+          max={repairableMachines}
+          step={1}
+          unit="대"
+          color="blue"
+          disabled={Boolean(plan) || room.currentRound < room.unlockRounds.machines || repairableMachines === 0}
+          onChange={(val) => setMachineRepairs(val)}
+          description={`수리 가능 ${repairableMachines}대 · 감가율에 비례한 수리비 ${calculateMachineRepairCost(company, selectedMarket.id, machineRepairs, room.currentRound).toLocaleString()}원`}
+        />
       </div>
       <div style={{ marginTop: '12px' }}><strong>기업 업그레이드 — 한 라운드에 1개</strong><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: '9px', marginTop: '8px' }}>{UPGRADE_OPTIONS.map((option) => { const unlockRound = room.unlockRounds[option.id]; const level = company.upgrades?.[option.id] || 0; const locked = room.currentRound < unlockRound; return <button type="button" key={option.id} disabled={Boolean(plan) || locked || level >= 3} onClick={() => setUpgradePurchase((current) => current === option.id ? null : option.id)} style={{ textAlign: 'left', padding: '12px', borderRadius: '10px', border: upgradePurchase === option.id ? '2px solid #0f766e' : '1px solid #cbd5e1', background: upgradePurchase === option.id ? '#f0fdfa' : '#fff' }}><strong>{option.icon} {option.name} Lv.{level}/3</strong><small style={{ display: 'block', marginTop: '5px', color: '#475569' }}>{option.description}</small><b style={{ display: 'block', marginTop: '6px', color: locked ? '#b45309' : '#0f766e' }}>{locked ? `🔒 Round ${unlockRound} 해금` : level >= 3 ? '최대 단계' : upgradePurchase === option.id ? `선택됨 · 투자비 ${quote.upgradeCost.toLocaleString()}원` : '선택하여 효과·비용 확인'}</b></button>; })}</div></div>
       <p style={{ fontSize: '13px', color: '#475569' }}>선택한 투자는 이번 생산계획부터 적용되고 이후 라운드에도 유지됩니다. 고급 설비는 기계가 여러 대일수록 효과가 커집니다.</p>
@@ -507,7 +532,20 @@ export const StudentPage: React.FC = () => {
 
     <section className="student-production" style={{ ...card, border: '2px solid #2563eb' }}><h2 style={{ marginTop: 0, fontSize: '18px' }}>고용과 생산 결정</h2><div className="production-reference-price"><span>{room.currentRound === 1 ? '초기 기준가격' : '이전 라운드 거래가격'}</span><strong>{publicReferencePrice.toLocaleString()}원/{quantityUnit}</strong></div>
       {isRiceMarket && <div style={{ marginBottom: '13px', padding: '12px', borderRadius: '10px', background: isRiceHarvestRound ? '#fef3c7' : '#ecfdf5', color: isRiceHarvestRound ? '#92400e' : '#166534' }}><strong>{isRiceHarvestRound ? '🌾 수확·판매 라운드' : `🌱 재배 ${room.currentRound - riceCycleStartRound + 1}/3라운드`}</strong><small style={{ display: 'block', marginTop: '4px' }}>1포대=10kg · 라운드마다 새로 적용되는 농지 한도 {riceLandCapacity}kg · 이번 주기 누적 생산 {riceCycleProduced}kg{isRiceHarvestRound ? ` · 현재 재배 물량과 이번 생산분을 합쳐 판매합니다.` : ' · 생산물은 주기 마지막 라운드까지 재배됩니다.'}</small></div>}
-      <label>총 고용 노동자 수<input type="number" min="1" max={cashLimitedWorkerCount} step="1" value={workerCount} disabled={Boolean(plan)} onChange={(e) => setWorkerCount(Math.max(1, Math.min(cashLimitedWorkerCount, Math.floor(Number(e.target.value) || 1))))} style={{ width: '100%', padding: '10px', marginTop: '6px' }} /><small style={{ display: 'block', marginTop: '5px', color: '#64748b' }}>기존 {company.employeeCount || 1}명 · 보호 고용 {minimumWorkerCount}명 · 추가고용 {Math.max(0, workerCount - (company.employeeCount || 1))}명 · 1명당 {selectedMarket.wagePerWorker.toLocaleString()}원 · 총임금 <strong style={{ color: '#7c3aed' }}>{quote.wageCost.toLocaleString()}원</strong>{quote.earlyTerminationCost > 0 && <> · 조기퇴직 보상 <strong style={{ color: '#dc2626' }}>{quote.earlyTerminationCost.toLocaleString()}원</strong></>}</small></label>
+      <div style={{ marginTop: '12px' }}>
+        <TouchStepper
+          label="총 고용 노동자 수"
+          value={workerCount}
+          min={1}
+          max={Math.max(1, cashLimitedWorkerCount)}
+          step={1}
+          unit="명"
+          color="blue"
+          disabled={Boolean(plan)}
+          onChange={(val) => setWorkerCount(val)}
+          description={`기존 ${company.employeeCount || 1}명 · 보호 고용 ${minimumWorkerCount}명 · 추가고용 ${Math.max(0, workerCount - (company.employeeCount || 1))}명 · 1명당 ${selectedMarket.wagePerWorker.toLocaleString()}원 · 총임금 ${quote.wageCost.toLocaleString()}원${quote.earlyTerminationCost > 0 ? ` · 조기퇴직 보상 ${quote.earlyTerminationCost.toLocaleString()}원` : ''}`}
+        />
+      </div>
       <div className="production-workspace">
         <div className="production-curve-column">
           <div style={{ padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
@@ -532,7 +570,29 @@ export const StudentPage: React.FC = () => {
         </div>
       </div>
     </section>
-    <section className="student-finance" style={card}><details open={room.currentRound >= room.unlockRounds.loans}><summary style={{ cursor: 'pointer', fontWeight: 800, fontSize: '18px' }}>🏦 선택 활동: 은행 대출 {room.currentRound < room.unlockRounds.loans && '🔒'}</summary>{room.currentRound < room.unlockRounds.loans ? <p style={{ color: '#64748b', fontSize: '13px' }}>Round {room.unlockRounds.loans}부터 열립니다. 대출은 생산의 핵심 활동이 아니라 금리 변화가 투자와 공급에 미치는 영향을 살펴보는 확장 기능입니다.</p> : <><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: '7px', marginTop: '12px', fontSize: '13px' }}><span>인정 자산 <b style={{ float: 'right' }}>{loanTerms.recognizedAssets.toLocaleString()}원</b></span><span>현재 대출잔액 <b style={{ float: 'right' }}>{(company.loanBalance || 0).toLocaleString()}원</b></span><span>추가 대출 가능액 <b style={{ float: 'right' }}>{loanTerms.availableLoan.toLocaleString()}원</b></span><span>적용 연이율 <b style={{ float: 'right' }}>{(company.loanAnnualRate || loanTerms.annualRate).toFixed(1)}%</b></span><span>라운드 이자 <b style={{ float: 'right' }}>{loanTerms.roundInterest.toLocaleString()}원</b></span><span>상환 예정 라운드 <b style={{ float: 'right' }}>{company.loanDueRound ? `R${company.loanDueRound}` : '-'}</b></span></div><input type="number" min="1000" step="1000" value={loanAmount} onChange={(event) => setLoanAmount(Math.max(1000, Math.floor(Number(event.target.value) || 1000)))} style={{ width: '100%', padding: '9px', marginTop: '12px' }} /><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '8px' }}><button disabled={!isDecision || loanAmount > loanTerms.availableLoan} onClick={borrowMoney}>대출 실행</button><button disabled={!isDecision || loanAmount > (company.loanBalance || 0) || loanAmount > company.cash} onClick={repayLoan}>원금 상환</button></div><small style={{ display: 'block', marginTop: '8px', color: '#64748b' }}>기준 연 4.5%에 부채비율별 위험 가산금리가 붙으며, 4개월인 매 라운드마다 연이자의 1/3을 냅니다.</small></>}</details></section>
+    <section className="student-finance" style={card}><details open={room.currentRound >= room.unlockRounds.loans}><summary style={{ cursor: 'pointer', fontWeight: 800, fontSize: '18px' }}>🏦 선택 활동: 은행 대출 {room.currentRound < room.unlockRounds.loans && '🔒'}</summary>{room.currentRound < room.unlockRounds.loans ? <p style={{ color: '#64748b', fontSize: '13px' }}>Round {room.unlockRounds.loans}부터 열립니다. 대출은 생산의 핵심 활동이 아니라 금리 변화가 투자와 공급에 미치는 영향을 살펴보는 확장 기능입니다.</p> : <><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: '7px', marginTop: '12px', fontSize: '13px' }}><span>인정 자산 <b style={{ float: 'right' }}>{loanTerms.recognizedAssets.toLocaleString()}원</b></span><span>현재 대출잔액 <b style={{ float: 'right' }}>{(company.loanBalance || 0).toLocaleString()}원</b></span><span>추가 대출 가능액 <b style={{ float: 'right' }}>{loanTerms.availableLoan.toLocaleString()}원</b></span><span>적용 연이율 <b style={{ float: 'right' }}>{(company.loanAnnualRate || loanTerms.annualRate).toFixed(1)}%</b></span><span>라운드 이자 <b style={{ float: 'right' }}>{loanTerms.roundInterest.toLocaleString()}원</b></span><span>상환 예정 라운드 <b style={{ float: 'right' }}>{company.loanDueRound ? `R${company.loanDueRound}` : '-'}</b></span></div>
+      <div style={{ marginTop: '12px' }}>
+        <TouchStepper
+          label="대출 및 상환 희망 금액"
+          value={loanAmount}
+          min={0}
+          max={Math.max(1000, loanTerms.availableLoan, company.loanBalance || 0)}
+          step={1000}
+          unit="원"
+          color="blue"
+          disabled={!isDecision}
+          onChange={(val) => setLoanAmount(val)}
+          quickPresets={[
+            { label: '최소 1천원', value: 1000 },
+            { label: '+5천원', value: Math.min(Math.max(1000, loanTerms.availableLoan, company.loanBalance || 0), loanAmount + 5000) },
+            { label: '+1만원', value: Math.min(Math.max(1000, loanTerms.availableLoan, company.loanBalance || 0), loanAmount + 10000) },
+            ...(loanTerms.availableLoan > 0 ? [{ label: '대출 전액', value: loanTerms.availableLoan }] : []),
+            ...((company.loanBalance || 0) > 0 ? [{ label: '상환 전액', value: Math.min(company.loanBalance || 0, company.cash) }] : [])
+          ]}
+          description={`추가 대출 한도: ${loanTerms.availableLoan.toLocaleString()}원 · 대출 잔액: ${(company.loanBalance || 0).toLocaleString()}원`}
+        />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '8px' }}><button disabled={!isDecision || loanAmount <= 0 || loanAmount > loanTerms.availableLoan} onClick={borrowMoney}>대출 실행</button><button disabled={!isDecision || loanAmount <= 0 || loanAmount > (company.loanBalance || 0) || loanAmount > company.cash} onClick={repayLoan}>원금 상환</button></div><small style={{ display: 'block', marginTop: '8px', color: '#64748b' }}>기준 연 4.5%에 부채비율별 위험 가산금리가 붙으며, 4개월인 매 라운드마다 연이자의 1/3을 냅니다.</small></>}</details></section>
 
     {plan?.settlementStatus === 'SETTLED' && <section className="student-result" style={{ ...card, border: '2px solid #16a34a', background: '#f0fdf4' }}>
       <h2 style={{ marginTop: 0, fontSize: '18px' }}>📊 Round {plan.roundNumber} 거래 결과</h2>
@@ -546,11 +606,45 @@ export const StudentPage: React.FC = () => {
       <label style={{ display: 'block', marginBottom: '10px' }}>가격 방향 예측<select value={pricePrediction} disabled={Boolean(plan)} onChange={(event) => changePricePrediction(event.target.value as 'UP' | 'SAME' | 'DOWN')} style={{ width: '100%', marginTop: '6px', padding: '9px' }}><option value="UP">상승 — 이전 가격 이상만 조정</option><option value="SAME">유지 — 이전 가격 ±5%만 조정</option><option value="DOWN">하락 — 이전 가격 이하만 조정</option></select></label>
       {selectedMarket.priceControl === 'MARKET_PRICE' ? <p style={{ fontSize: '13px', color: '#64748b' }}>현재 라운드의 거래가격은 공개되지 않습니다. 신문과 판매 여부를 살펴보고 판매 가능한 최저 희망가격을 정하세요.</p> : <p style={{ fontSize: '13px', color: '#64748b' }}>스마트폰 과점시장에서는 낮은 가격 기업부터 판매되고, 남은 수요를 다음 기업이 가져갑니다.</p>}
       <div style={{ padding: '14px', background: '#f5f3ff', borderRadius: '10px', display: 'flex', justifyContent: 'space-between' }}><span>{publicPriceLabel}</span><strong style={{ color: '#7c3aed' }}>{publicReferencePrice.toLocaleString()}원/{quantityUnit}</strong></div>
-      <label style={{ display: 'block', marginTop: '10px' }}>{selectedMarket.priceControl === 'MARKET_PRICE' ? '최저 판매 희망가격' : '우리 기업 판매가격'}<input type="number" min={predictionMinimumPrice} max={predictionMaximumPrice} step="10" value={askingPrice} disabled={Boolean(plan) && room.roundPhase !== 'SELLING'} onChange={(e) => setAskingPrice(Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, Number(e.target.value) || predictionMinimumPrice)))} style={{ width: '100%', marginTop: '6px', padding: '10px' }} /><small style={{ display: 'block', marginTop: '5px', color: '#64748b' }}>예측 범위 {predictionMinimumPrice.toLocaleString()}~{predictionMaximumPrice.toLocaleString()}원</small></label>
-      <label style={{ display: 'block', marginTop: '10px' }}>최대 판매 희망 수량
-        <input type="number" min="0" max={maximumSellableQuantity} step="1" value={desiredOfferedQuantity} disabled={Boolean(plan) || maximumSellableQuantity === 0} onChange={(event) => setOfferedQuantitySelection({ scope: offeredQuantityScope, quantity: Math.max(0, Math.min(maximumSellableQuantity, Math.floor(Number(event.target.value) || 0))) })} style={{ width: '100%', marginTop: '6px', padding: '10px' }} />
-        <small style={{ display: 'block', marginTop: '5px', color: '#64748b' }}>{isRiceMarket && !isRiceHarvestRound ? '쌀은 수확 라운드에 누적 재고의 판매 수량을 정할 수 있습니다.' : `판매 가능 ${maximumSellableQuantity.toLocaleString()}${quantityUnit} · 판매하지 않은 물량은 다음 라운드 재고로 남습니다.`}</small>
-      </label>
+      <div style={{ marginTop: '14px' }}>
+        <TouchStepper
+          label={selectedMarket.priceControl === 'MARKET_PRICE' ? '최저 판매 희망가격' : '우리 기업 판매가격'}
+          value={askingPrice}
+          min={predictionMinimumPrice}
+          max={predictionMaximumPrice}
+          step={10}
+          unit="원"
+          color="purple"
+          disabled={Boolean(plan) && room.roundPhase !== 'SELLING'}
+          onChange={(val) => setAskingPrice(val)}
+          quickPresets={[
+            { label: '-50원', value: Math.max(predictionMinimumPrice, askingPrice - 50) },
+            { label: '+50원', value: Math.min(predictionMaximumPrice, askingPrice + 50) },
+            { label: '기준가격', value: Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, publicReferencePrice)) }
+          ]}
+          description={`예측 범위: ${predictionMinimumPrice.toLocaleString()}원 ~ ${predictionMaximumPrice.toLocaleString()}원`}
+        />
+      </div>
+
+      <div style={{ marginTop: '14px' }}>
+        <TouchStepper
+          label="최대 판매 희망 수량"
+          value={desiredOfferedQuantity}
+          min={0}
+          max={maximumSellableQuantity}
+          step={1}
+          unit={quantityUnit}
+          color="purple"
+          disabled={Boolean(plan) || maximumSellableQuantity === 0}
+          onChange={(val) => setOfferedQuantitySelection({ scope: offeredQuantityScope, quantity: val })}
+          quickPresets={[
+            { label: '전량 보관 (0)', value: 0 },
+            { label: '절반 판매', value: Math.floor(maximumSellableQuantity / 2) },
+            { label: '전량 판매', value: maximumSellableQuantity }
+          ]}
+          description={isRiceMarket && !isRiceHarvestRound ? '쌀은 수확 라운드에 누적 재고의 판매 수량을 정할 수 있습니다.' : `판매 가능 ${maximumSellableQuantity.toLocaleString()}${quantityUnit} · 판매하지 않은 물량은 다음 라운드 재고로 남습니다.`}
+        />
+      </div>
       {room.roundPhase === 'SELLING' && plan && <div style={{ display: 'flex', gap: '7px', marginTop: '9px', flexWrap: 'wrap' }}><button onClick={() => void applyAskingPrice(askingPrice - 10)}>− 10원 즉시 반영</button><button onClick={() => void applyAskingPrice(askingPrice + 10)}>+ 10원 즉시 반영</button></div>}
       {selectedMarket.priceControl === 'FIRM_PRICE' && <small style={{ display: 'block', marginTop: '7px', color: '#64748b' }}>현재 진입 기업 {selectedMarketParticipants}개사 · 가격이 높아질수록 수요가 점진적으로 감소합니다.</small>}
     </section>
@@ -560,7 +654,27 @@ export const StudentPage: React.FC = () => {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '6px', marginBottom: '9px' }}>{[1, 2, 3, 4].map((month) => <div key={month} style={{ padding: '8px 4px', textAlign: 'center', borderRadius: '8px', background: month <= sellingMonth ? '#f59e0b' : '#fde68a', color: month <= sellingMonth ? '#fff' : '#92400e', fontWeight: 800 }}>{month}개월</div>)}</div>
       <progress value={sellingProgress} max={1} style={{ width: '100%' }} />
       <div style={{ display: 'grid', gap: '7px', marginTop: '10px' }}><span>현재 기간 <b style={{ float: 'right' }}>{sellingMonth}개월 차 / 4개월</b></span><span>적용 중인 희망가격 <b style={{ float: 'right' }}>{currentSalePrice.toLocaleString()}원</b></span><span>현재까지 판매 <b style={{ float: 'right', color: '#2563eb' }}>{liveSoldQuantity}{quantityUnit}</b></span><span>현재 남은 판매대상 <b style={{ float: 'right' }}>{Math.max(0, plannedSaleQuantity - liveSoldQuantity)}{quantityUnit}</b></span></div>
-      <div style={{ marginTop: '12px', padding: '12px', borderRadius: '9px', border: '1px solid #fbbf24', background: '#fff' }}><strong>판매 중 희망가격 조정</strong><input aria-label="판매 진행 중 희망가격" type="number" min={predictionMinimumPrice} max={predictionMaximumPrice} step="10" value={askingPrice} onChange={(event) => setAskingPrice(Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, Number(event.target.value) || predictionMinimumPrice)))} onBlur={() => void applyAskingPrice()} onKeyDown={(event) => { if (event.key === 'Enter') void applyAskingPrice(); }} style={{ width: '100%', padding: '10px', marginTop: '8px' }} /><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '7px', marginTop: '8px' }}><button onClick={() => void applyAskingPrice(askingPrice - 10)}>− 10원 즉시 반영</button><button onClick={() => void applyAskingPrice(askingPrice + 10)}>+ 10원 즉시 반영</button></div></div>
+      <div style={{ marginTop: '12px', padding: '12px', borderRadius: '9px', border: '1px solid #fbbf24', background: '#fff' }}>
+        <TouchStepper
+          label="판매 중 희망가격 조정"
+          value={askingPrice}
+          min={predictionMinimumPrice}
+          max={predictionMaximumPrice}
+          step={10}
+          unit="원"
+          color="amber"
+          onChange={(val) => {
+            setAskingPrice(val);
+            void applyAskingPrice(val);
+          }}
+          quickPresets={[
+            { label: '− 10원 즉시 반영', value: Math.max(predictionMinimumPrice, askingPrice - 10) },
+            { label: '+ 10원 즉시 반영', value: Math.min(predictionMaximumPrice, askingPrice + 10) },
+            { label: '기준가격', value: Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, publicReferencePrice)) }
+          ]}
+          description={`예측 범위: ${predictionMinimumPrice.toLocaleString()}원 ~ ${predictionMaximumPrice.toLocaleString()}원`}
+        />
+      </div>
       <div style={{ marginTop: '12px', padding: '12px', borderRadius: '9px', background: projectedSellThrough < 1 ? '#fee2e2' : '#dcfce7', color: projectedSellThrough < 1 ? '#991b1b' : '#166534' }}><strong>🔎 판매 상황</strong><p style={{ margin: '5px 0 0', fontSize: '13px', lineHeight: 1.55 }}>{saleAnalysis}</p></div>
     </section>}
 
