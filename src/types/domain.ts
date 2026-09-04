@@ -146,6 +146,8 @@ export interface Room {
   unlockRounds: UnlockRounds;
   economicsQuizzes: EconomicsQuiz[];
   quizSchedule?: Record<string, string | null>;
+  reflectionInterval?: number;
+  reflectionSheets?: ReflectionSheet[];
   newsTemplates?: Record<string, { headline: string; body: string }>;
   createdAt: number;
   // 이전 버전 룸 문서 호환용
@@ -154,6 +156,18 @@ export interface Room {
   marketDescription?: string;
   marketIcon?: string;
 }
+
+export interface ReflectionQuestion { id: string; prompt: string; }
+export interface ReflectionSheet { id: string; title: string; questions: ReflectionQuestion[]; }
+export const DEFAULT_REFLECTION_SHEETS: ReflectionSheet[] = [{
+  id: 'annual-reflection',
+  title: '경제 활동지',
+  questions: [
+    { id: 'marginal-product', prompt: '노동자를 추가했을 때 한계생산물과 한계비용은 어떻게 변했나요?' },
+    { id: 'market-change', prompt: '수요·공급 변화가 시장가격에 어떤 영향을 주었나요?' },
+    { id: 'next-strategy', prompt: '다음 기간에는 어떤 결정을 바꾸겠나요?' },
+  ],
+}];
 
 export interface EconomicsQuiz {
   id: string;
@@ -322,6 +336,9 @@ export interface LearningReflection {
   marginalProductObservation: string;
   marketChangeObservation: string;
   nextStrategy: string;
+  sheetId?: string;
+  sheetTitle?: string;
+  answers?: Array<{ questionId: string; question: string; answer: string }>;
   submittedAt: number;
 }
 

@@ -1,8 +1,8 @@
 import { collection, doc, getDoc, getDocs, onSnapshot, runTransaction, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import type { DocumentData, DocumentReference, QueryDocumentSnapshot, QuerySnapshot, Unsubscribe } from 'firebase/firestore';
 import { db } from './firebase/config';
-import type { DemandEvent, EconomicsQuiz, Market, Room } from '../types/domain';
-import { DEFAULT_ECONOMICS_QUIZZES, DEFAULT_UNLOCK_ROUNDS, DEMAND_EVENT_OPTIONS, EVENT_INTENSITY_SCALE, MARKETS } from '../types/domain';
+import type { DemandEvent, EconomicsQuiz, Market, ReflectionSheet, Room } from '../types/domain';
+import { DEFAULT_ECONOMICS_QUIZZES, DEFAULT_REFLECTION_SHEETS, DEFAULT_UNLOCK_ROUNDS, DEMAND_EVENT_OPTIONS, EVENT_INTENSITY_SCALE, MARKETS } from '../types/domain';
 
 const baselineEvents = (): DemandEvent[] => MARKETS.map((market) => ({
   marketId: market.id,
@@ -101,6 +101,8 @@ export const normalizeRoom = (roomId: string, data: Partial<Room>): Room => ({
   unlockRounds: { ...DEFAULT_UNLOCK_ROUNDS, ...(data.unlockRounds || {}) },
   economicsQuizzes: data.economicsQuizzes?.length ? data.economicsQuizzes : DEFAULT_ECONOMICS_QUIZZES,
   quizSchedule: data.quizSchedule || Object.fromEntries(Array.from({ length: 20 }, (_, index) => [String(index + 1), (data.economicsQuizzes?.length ? data.economicsQuizzes : DEFAULT_ECONOMICS_QUIZZES)[index % (data.economicsQuizzes?.length || DEFAULT_ECONOMICS_QUIZZES.length)].id])),
+  reflectionInterval: Math.max(1, Math.min(20, Math.floor(data.reflectionInterval || 3))),
+  reflectionSheets: data.reflectionSheets?.length ? data.reflectionSheets : DEFAULT_REFLECTION_SHEETS,
   newsTemplates: data.newsTemplates || {},
   createdAt: data.createdAt || 0,
 });
@@ -242,7 +244,7 @@ export const roomService = {
   createRoom: async (roomId: string, title: string): Promise<void> => {
     const roomRef = doc(db, 'rooms', roomId);
     if ((await getDoc(roomRef)).exists()) throw new Error('ROOM_ALREADY_EXISTS');
-    await setDoc(roomRef, { id: roomId, title, markets: MARKETS, currentRound: 1, status: 'WAITING', roundPhase: 'DECISION', demandEvents: baselineEvents(), pendingDemandEvents: [], unlockRounds: DEFAULT_UNLOCK_ROUNDS, economicsQuizzes: DEFAULT_ECONOMICS_QUIZZES, createdAt: Date.now() } satisfies Room);
+    await setDoc(roomRef, { id: roomId, title, markets: MARKETS, currentRound: 1, status: 'WAITING', roundPhase: 'DECISION', demandEvents: baselineEvents(), pendingDemandEvents: [], unlockRounds: DEFAULT_UNLOCK_ROUNDS, economicsQuizzes: DEFAULT_ECONOMICS_QUIZZES, reflectionInterval: 3, reflectionSheets: DEFAULT_REFLECTION_SHEETS, createdAt: Date.now() } satisfies Room);
   },
   startRoom: async (roomId: string): Promise<void> => {
     const roomRef = doc(db, 'rooms', roomId);
@@ -328,6 +330,21 @@ export const roomService = {
       return [round, quizId];
     }));
     await updateDoc(doc(db, 'rooms', roomId), { economicsQuizzes: normalized, quizSchedule: normalizedSchedule });
+  },
+  updateReflectionSettings: async (roomId: string, interval: number, sheets: ReflectionSheet[]): Promise<void> => {
+    const normalizedInterval = Math.floor(interval);
+    if (!Number.isInteger(normalizedInterval) || normalizedInterval < 1 || normalizedInterval > 20 || sheets.length < 1 || sheets.length > 20) throw new Error('INVALID_REFLECTION_SETTINGS');
+    const normalizedSheets = sheets.map((sheet, sheetIndex) => {
+      const title = sheet.title.trim();
+      if (!title || title.length > 80 || sheet.questions.length < 1 || sheet.questions.length > 10) throw new Error('INVALID_REFLECTION_SETTINGS');
+      const questions = sheet.questions.map((question, questionIndex) => {
+        const prompt = question.prompt.trim();
+        if (!prompt || prompt.length > 300) throw new Error('INVALID_REFLECTION_SETTINGS');
+        return { id: question.id || `question-${sheetIndex + 1}-${questionIndex + 1}`, prompt };
+      });
+      return { id: sheet.id || `reflection-${sheetIndex + 1}`, title, questions };
+    });
+    await updateDoc(doc(db, 'rooms', roomId), { reflectionInterval: normalizedInterval, reflectionSheets: normalizedSheets });
   },
   updateNewsTemplates: async (roomId: string, templates: Record<string, { headline: string; body: string }>): Promise<void> => {
     const normalized = Object.fromEntries(Object.entries(templates).map(([id, template]) => [id, {

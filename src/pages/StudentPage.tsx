@@ -5,7 +5,7 @@ import { ConceptHelp } from '../components/ConceptHelp';
 import { StudentRosterEditor } from '../components/StudentRosterEditor';
 import { calculateLoanTerms, calculateMachineRepairCost, calculateMarketClearing, calculateMinimumWorkerCount, calculateProductionQuote, companyService, getTechnologyMarketFit, machineDepreciationRate, productionService, reflectionService, roomService, scaleMarketEventFactor } from '../services';
 import type { Company, InventoryItem, LearningReflection, Market, ProductionPlan, Room, UpgradeType } from '../types/domain';
-import { EVENT_INTENSITY_SCALE, INDUSTRY_TRAITS, INITIAL_COMPANY_CASH, UPGRADE_OPTIONS } from '../types/domain';
+import { DEFAULT_REFLECTION_SHEETS, EVENT_INTENSITY_SCALE, INDUSTRY_TRAITS, INITIAL_COMPANY_CASH, UPGRADE_OPTIONS } from '../types/domain';
 
 const STUDENT_SESSION_KEY = 'marketlab:student-session';
 const saveSession = (roomId: string, companyName: string) => {
@@ -130,7 +130,7 @@ export const StudentPage: React.FC = () => {
   const [showProducerSurplus, setShowProducerSurplus] = useState(false);
   const [clock, setClock] = useState(0);
   const [reflection, setReflection] = useState<LearningReflection | null>(null);
-  const [reflectionAnswers, setReflectionAnswers] = useState({ marginalProductObservation: '', marketChangeObservation: '', nextStrategy: '' });
+  const [reflectionAnswers, setReflectionAnswers] = useState<Record<string, string>>({});
   const [industryTraitId, setIndustryTraitId] = useState('industry_service');
   const [diagnosisWorkers, setDiagnosisWorkers] = useState(10);
   const [diagnosisQuantities, setDiagnosisQuantities] = useState<Record<string, number>>({});
@@ -160,7 +160,7 @@ export const StudentPage: React.FC = () => {
         setProductionQty(10);
         setMessage(null);
         setReflection(null);
-        setReflectionAnswers({ marginalProductObservation: '', marketChangeObservation: '', nextStrategy: '' });
+        setReflectionAnswers({});
       }
       observedRound.current = value.currentRound;
       setRoom(value);
@@ -230,6 +230,10 @@ export const StudentPage: React.FC = () => {
 
   const scheduledQuizId = room.quizSchedule?.[String(room.currentRound)];
   const currentQuiz = scheduledQuizId ? room.economicsQuizzes.find((quiz) => quiz.id === scheduledQuizId) : undefined;
+  const reflectionInterval = room.reflectionInterval || 3;
+  const reflectionSheets = room.reflectionSheets?.length ? room.reflectionSheets : DEFAULT_REFLECTION_SHEETS;
+  const reflectionDue = room.currentRound % reflectionInterval === 0;
+  const currentReflectionSheet = reflectionSheets[(Math.floor(room.currentRound / reflectionInterval) - 1) % reflectionSheets.length];
   const selectedMarket = room.markets.find((market) => market.id === (plan?.productId || selectedMarketId)) || room.markets[0];
   const publicReferencePrice = getPublicMarketPrice(selectedMarket);
   const publicPriceLabel = room.currentRound === 1 || !selectedMarket.publicPriceRound ? '초기 기준가격' : `Round ${selectedMarket.publicPriceRound} 거래가격`;
@@ -362,8 +366,9 @@ export const StudentPage: React.FC = () => {
   };
   const applyAskingPrice = async (nextPrice = askingPrice) => { if (!plan) return; const bounded = Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, nextPrice)); setAskingPrice(bounded); try { await productionService.updateAskingPrice(roomId, company.id, room.currentRound, bounded); setMessage('변경한 가격이 즉시 판매에 반영되었습니다.'); } catch (reason) { setMessage(reason instanceof Error && reason.message === 'PRICE_OUT_OF_RANGE' ? '선택한 예측 방향의 허용 범위 안에서만 가격을 조정할 수 있습니다.' : '30초 판매시간이 끝나 가격을 변경할 수 없습니다.'); } };
   const submitReflection = async () => {
-    if (!reflectionAnswers.marginalProductObservation.trim() || !reflectionAnswers.marketChangeObservation.trim() || !reflectionAnswers.nextStrategy.trim()) return setMessage('활동지의 세 문항을 모두 작성해주세요.');
-    await reflectionService.save({ roomId, companyId: company.id, companyName: company.name, roundNumber: room.currentRound, ...reflectionAnswers });
+    const answers = currentReflectionSheet.questions.map((question) => ({ questionId: question.id, question: question.prompt, answer: (reflectionAnswers[question.id] || '').trim() }));
+    if (answers.some((answer) => !answer.answer)) return setMessage('활동지의 모든 문항을 작성해주세요.');
+    await reflectionService.save({ roomId, companyId: company.id, companyName: company.name, roundNumber: room.currentRound, sheetId: currentReflectionSheet.id, sheetTitle: currentReflectionSheet.title, answers, marginalProductObservation: answers[0]?.answer || '', marketChangeObservation: answers[1]?.answer || '', nextStrategy: answers[2]?.answer || '' });
     setMessage('경제 활동지가 제출되었습니다.');
   };
   const confirmTraits = async () => {
@@ -597,7 +602,7 @@ export const StudentPage: React.FC = () => {
     </div>
     </div>
 
-    {room.roundPhase === 'RESULT' && room.currentRound % 3 === 0 && <section style={{ ...card, border: '2px solid #0f766e', background: '#f0fdfa' }}><h2 style={{ marginTop: 0, fontSize: '18px' }}>📝 1년 경제 활동지</h2>{reflection ? <p style={{ color: '#0f766e', fontWeight: 700 }}>Round {reflection.roundNumber} 활동지를 제출했습니다.</p> : <div style={{ display: 'grid', gap: '10px' }}><label>노동자를 추가했을 때 한계생산물과 한계비용은 어떻게 변했나요?<textarea value={reflectionAnswers.marginalProductObservation} onChange={(event) => setReflectionAnswers((current) => ({ ...current, marginalProductObservation: event.target.value }))} rows={3} style={{ width: '100%', marginTop: '5px' }} /></label><label>수요·공급 변화가 시장가격에 어떤 영향을 주었나요?<textarea value={reflectionAnswers.marketChangeObservation} onChange={(event) => setReflectionAnswers((current) => ({ ...current, marketChangeObservation: event.target.value }))} rows={3} style={{ width: '100%', marginTop: '5px' }} /></label><label>다음 1년에는 어떤 결정을 바꾸겠나요?<textarea value={reflectionAnswers.nextStrategy} onChange={(event) => setReflectionAnswers((current) => ({ ...current, nextStrategy: event.target.value }))} rows={3} style={{ width: '100%', marginTop: '5px' }} /></label><button onClick={submitReflection} style={{ padding: '11px', background: '#0f766e', color: '#fff', border: 0, borderRadius: '8px', fontWeight: 800 }}>활동지 제출</button></div>}</section>}
+    {room.roundPhase === 'RESULT' && reflectionDue && <section style={{ ...card, border: '2px solid #0f766e', background: '#f0fdfa' }}><h2 style={{ marginTop: 0, fontSize: '18px' }}>📝 {currentReflectionSheet.title}</h2><small style={{ color: '#64748b' }}>{reflectionInterval}라운드마다 제출</small>{reflection ? <p style={{ color: '#0f766e', fontWeight: 700 }}>Round {reflection.roundNumber} 활동지를 제출했습니다.</p> : <div style={{ display: 'grid', gap: '10px', marginTop: '12px' }}>{currentReflectionSheet.questions.map((question, index) => <label key={question.id}>{index + 1}. {question.prompt}<textarea value={reflectionAnswers[question.id] || ''} onChange={(event) => setReflectionAnswers((current) => ({ ...current, [question.id]: event.target.value }))} rows={3} style={{ width: '100%', marginTop: '5px' }} /></label>)}<button onClick={submitReflection} style={{ padding: '11px', background: '#0f766e', color: '#fff', border: 0, borderRadius: '8px', fontWeight: 800 }}>활동지 제출</button></div>}</section>}
 
   </main></div>;
 };
