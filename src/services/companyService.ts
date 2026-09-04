@@ -86,6 +86,7 @@ const hasCurrentProductionProfile = (company: Company) =>
 
 const normalizeCompany = (company: Company): Company => ({
   ...company,
+  studentMembers: company.studentMembers || [],
   productionProfile: hasCurrentProductionProfile(company)
     ? company.productionProfile
     : createProductionProfile(company.technologyId),
@@ -122,6 +123,17 @@ const findLegacyCompanyId = async (roomId: string, companyName: string) => {
 };
 
 export const companyService = {
+  updateStudentMembers: async (roomId: string, companyId: string, studentMembers: StudentMember[]): Promise<void> => {
+    const normalizedMembers = studentMembers
+      .map((member) => ({ studentNumber: member.studentNumber.trim(), name: member.name.trim() }))
+      .filter((member) => member.studentNumber || member.name);
+    if (normalizedMembers.length < 1 || normalizedMembers.length > 30 || normalizedMembers.some((member) => !member.studentNumber || !member.name) || new Set(normalizedMembers.map((member) => member.studentNumber)).size !== normalizedMembers.length) throw new Error('INVALID_STUDENT_MEMBERS');
+    const companyRef = doc(db, 'rooms', roomId, 'companies', companyId);
+    await runTransaction(db, async (transaction) => {
+      if (!(await transaction.get(companyRef)).exists()) throw new Error('COMPANY_NOT_FOUND');
+      transaction.update(companyRef, { studentMembers: normalizedMembers });
+    });
+  },
   awardQuiz: async (roomId: string, companyId: string, roundNumber: number, reward = 20000): Promise<void> => {
     const companyRef = doc(db, 'rooms', roomId, 'companies', companyId);
     await runTransaction(db, async (transaction) => {
@@ -143,6 +155,9 @@ export const companyService = {
   ): Promise<Company> => {
     const trimmedName = validateCompanyName(companyName);
     const normalizedName = normalizeCompanyName(trimmedName);
+    const normalizedMembers = studentMembers
+      .map((member) => ({ studentNumber: member.studentNumber.trim(), name: member.name.trim() }))
+      .filter((member) => member.studentNumber && member.name);
     const legacyCompanyId = await findLegacyCompanyId(roomId, trimmedName);
     const roomRef = doc(db, 'rooms', roomId);
     const nameIndexRef = doc(
@@ -168,6 +183,16 @@ export const companyService = {
       const companySnapshot = await transaction.get(companyRef);
       if (companySnapshot.exists()) {
         const existingCompany = companySnapshot.data() as Company;
+        const mergedMembers = Array.from(
+          new Map(
+            [...(existingCompany.studentMembers || []), ...normalizedMembers]
+              .map((member) => ({ studentNumber: member.studentNumber.trim(), name: member.name.trim() }))
+              .filter((member) => member.studentNumber && member.name)
+              .map((member) => [member.studentNumber, member]),
+          ).values(),
+        );
+        if (mergedMembers.length > 30) throw new Error('INVALID_STUDENT_MEMBERS');
+        const shouldSaveMembers = normalizedMembers.length > 0;
         if (
           hasCurrentProductionProfile(existingCompany) &&
           typeof existingCompany.machineCount === 'number' &&
@@ -175,9 +200,10 @@ export const companyService = {
           Array.isArray(existingCompany.machineAssets) &&
           typeof existingCompany.technologyLevel === 'number' &&
           existingCompany.normalizedName &&
-          nameIndexSnapshot.exists()
+          nameIndexSnapshot.exists() &&
+          !shouldSaveMembers
         ) {
-          return existingCompany;
+          return normalizeCompany(existingCompany);
         }
 
         const upgradedCompany: Company = {
@@ -191,6 +217,7 @@ export const companyService = {
           employeeCount: upgradedCompany.employeeCount,
           machineAssets: upgradedCompany.machineAssets,
           technologyLevel: upgradedCompany.technologyLevel,
+          ...(shouldSaveMembers ? { studentMembers: mergedMembers } : {}),
         });
         transaction.set(nameIndexRef, {
           companyId,
@@ -198,13 +225,16 @@ export const companyService = {
           normalizedName,
           updatedAt: Date.now(),
         });
-        return upgradedCompany;
+        return { ...upgradedCompany, ...(shouldSaveMembers ? { studentMembers: mergedMembers } : {}) };
       }
 
       const room = roomSnapshot.data();
       // 결석 학생도 수업 도중 합류할 수 있다. 종료된 수업에만 새 회사를 막는다.
       if ((room.status || 'WAITING') === 'FINISHED') {
         throw new Error('ROOM_NOT_JOINABLE');
+      }
+      if (normalizedMembers.length === 0) {
+        throw new Error('NEW_COMPANY_MEMBERS_REQUIRED');
       }
 
       const defaultTech = TECHNOLOGIES[0];
@@ -226,9 +256,7 @@ export const companyService = {
         employeeCount: 1,
         machineAssets: [],
         technologyLevel: 0,
-        studentMembers: studentMembers
-          .map((member) => ({ studentNumber: member.studentNumber.trim(), name: member.name.trim() }))
-          .filter((member) => member.studentNumber && member.name),
+        studentMembers: normalizedMembers,
         status: 'ACTIVE',
         createdAt: now,
         joinedAt: now,

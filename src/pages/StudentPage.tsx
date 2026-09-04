@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { FirmSupplyCurve } from '../components/FirmSupplyCurve';
 import { ConceptHelp } from '../components/ConceptHelp';
+import { StudentRosterEditor } from '../components/StudentRosterEditor';
 import { calculateLoanTerms, calculateMachineRepairCost, calculateMarketClearing, calculateMinimumWorkerCount, calculateProductionQuote, companyService, getTechnologyMarketFit, machineDepreciationRate, productionService, reflectionService, roomService, scaleMarketEventFactor } from '../services';
 import type { Company, InventoryItem, LearningReflection, Market, ProductionPlan, Room, UpgradeType } from '../types/domain';
 import { EVENT_INTENSITY_SCALE, INDUSTRY_TRAITS, INITIAL_COMPANY_CASH, UPGRADE_OPTIONS } from '../types/domain';
@@ -15,6 +16,7 @@ const errorText = (error: unknown) => {
   if (code === 'ROOM_NOT_FOUND') return '존재하지 않는 룸 코드입니다.';
   if (code === 'ROOM_NOT_JOINABLE') return '종료된 수업에는 새 회사로 입장할 수 없습니다.';
   if (code === 'INVALID_COMPANY_NAME') return '회사 이름은 1자 이상 30자 이하로 입력해주세요.';
+  if (code === 'NEW_COMPANY_MEMBERS_REQUIRED') return '처음 만드는 회사입니다. 이전 화면으로 돌아가 참여 학생의 학번과 이름을 입력해주세요.';
   return '회사 접속 중 오류가 발생했습니다.';
 };
 
@@ -123,6 +125,7 @@ export const StudentPage: React.FC = () => {
   const [productionConfirmOpen, setProductionConfirmOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [quizOpen, setQuizOpen] = useState(false);
+  const [rosterOpen, setRosterOpen] = useState(false);
   const [showSupplyCurve, setShowSupplyCurve] = useState(true);
   const [showProducerSurplus, setShowProducerSurplus] = useState(false);
   const [clock, setClock] = useState(0);
@@ -414,9 +417,10 @@ export const StudentPage: React.FC = () => {
         <div className="confirmation-actions"><button type="button" onClick={() => setProductionConfirmOpen(false)} disabled={submitting}>돌아가서 수정</button><button type="button" onClick={submitProduction} disabled={submitting}>{submitting ? '확정 중...' : '예측과 생산 결정 확정'}</button></div>
       </section>
     </div>}
+    {rosterOpen ? <div className="teacher-nested-modal" role="dialog" aria-modal="true" aria-labelledby="student-roster-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setRosterOpen(false); }}><section className="teacher-company-status-modal" style={{ ...card, border: '2px solid #2563eb' }}><div className="teacher-modal-heading"><h3 id="student-roster-title" style={{ margin: 0 }}>👥 {company.name} 참여 학생</h3><button type="button" onClick={() => setRosterOpen(false)} aria-label="학생 명단 닫기">✕</button></div><p style={{ color: '#64748b' }}>새로 합류한 학생을 추가하거나 기존 학생의 학번·이름을 수정할 수 있습니다.</p><StudentRosterEditor key={`${company.id}:${company.studentMembers?.length || 0}`} initialMembers={company.studentMembers || []} onSave={(members) => companyService.updateStudentMembers(roomId, company.id, members)} onClose={() => setRosterOpen(false)} /></section></div> : null}
     <main className="student-dashboard">
     <section className="student-company" style={card}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}><div><small style={{ color: '#64748b' }}>룸 {room.id} · {room.title}</small><h1 style={{ margin: '3px 0' }}>🏢 {company.name}</h1></div><button onClick={logout} style={{ height: '34px' }}>로그아웃</button></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}><div><small style={{ color: '#64748b' }}>룸 {room.id} · {room.title}</small><h1 style={{ margin: '3px 0' }}>🏢 {company.name}</h1></div><div style={{ display: 'flex', gap: '7px' }}><button type="button" onClick={() => setRosterOpen(true)} style={{ height: '34px' }}>👥 회사 인원 보기</button><button onClick={logout} style={{ height: '34px' }}>로그아웃</button></div></div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', marginTop: '14px' }}>
         <div><small>보유 자본금</small><strong style={{ display: 'block', color: '#059669' }}>{company.cash.toLocaleString()}원</strong></div>
         <div><small>보유 기계</small><strong style={{ display: 'block' }}>{company.machineCount || 1}대</strong></div>

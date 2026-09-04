@@ -16,10 +16,6 @@ export const HomePage: React.FC = () => {
       return;
     }
     const members = studentMembers.filter((member) => member.studentNumber.trim() && member.name.trim());
-    if (members.length === 0) {
-      alert('처음 회사를 만드는 학생의 학번과 이름을 한 명 이상 입력해주세요. 기존 회사라면 대표 학생 정보를 입력해도 기존 명단은 바뀌지 않습니다.');
-      return;
-    }
     navigate(`/student?roomId=${encodeURIComponent(roomId.trim())}&name=${encodeURIComponent(companyName.trim())}&members=${encodeURIComponent(JSON.stringify(members))}`);
   };
 
@@ -88,7 +84,7 @@ export const HomePage: React.FC = () => {
             </div>
 
             <div style={{ marginBottom: '18px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: '#475569', marginBottom: '7px' }}>참여 학생 명단 <small style={{ fontWeight: 400 }}>(신규 회사에만 저장)</small></label>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: '#475569', marginBottom: '7px' }}>참여 학생 명단 <small style={{ fontWeight: 400 }}>(신규 회사만 필수 · 기존 회사는 비워도 됨)</small></label>
               {studentMembers.map((member, index) => <div key={index} style={{ display: 'grid', gridTemplateColumns: '0.8fr 1fr auto', gap: '6px', marginBottom: '6px' }}>
                 <input aria-label={`학생 ${index + 1} 학번`} placeholder="학번" value={member.studentNumber} onChange={(event) => setStudentMembers((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, studentNumber: event.target.value } : item))} style={{ minWidth: 0, padding: '9px', border: '1px solid #cbd5e1', borderRadius: '7px' }} />
                 <input aria-label={`학생 ${index + 1} 이름`} placeholder="이름" value={member.name} onChange={(event) => setStudentMembers((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} style={{ minWidth: 0, padding: '9px', border: '1px solid #cbd5e1', borderRadius: '7px' }} />
