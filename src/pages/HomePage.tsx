@@ -5,6 +5,9 @@ export const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const [roomId, setRoomId] = useState('');
   const [companyName, setCompanyName] = useState('');
+  const [studentMembers, setStudentMembers] = useState([{ studentNumber: '', name: '' }]);
+  const [teacherLoginOpen, setTeacherLoginOpen] = useState(false);
+  const [teacherPassword, setTeacherPassword] = useState('');
 
   const handleJoinStudent = (e: React.FormEvent) => {
     e.preventDefault();
@@ -12,7 +15,12 @@ export const HomePage: React.FC = () => {
       alert('룸 코드와 회사 이름을 모두 입력해주세요.');
       return;
     }
-    navigate(`/student?roomId=${encodeURIComponent(roomId.trim())}&name=${encodeURIComponent(companyName.trim())}`);
+    const members = studentMembers.filter((member) => member.studentNumber.trim() && member.name.trim());
+    if (members.length === 0) {
+      alert('처음 회사를 만드는 학생의 학번과 이름을 한 명 이상 입력해주세요. 기존 회사라면 대표 학생 정보를 입력해도 기존 명단은 바뀌지 않습니다.');
+      return;
+    }
+    navigate(`/student?roomId=${encodeURIComponent(roomId.trim())}&name=${encodeURIComponent(companyName.trim())}&members=${encodeURIComponent(JSON.stringify(members))}`);
   };
 
   return (
@@ -79,6 +87,16 @@ export const HomePage: React.FC = () => {
               />
             </div>
 
+            <div style={{ marginBottom: '18px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: '#475569', marginBottom: '7px' }}>참여 학생 명단 <small style={{ fontWeight: 400 }}>(신규 회사에만 저장)</small></label>
+              {studentMembers.map((member, index) => <div key={index} style={{ display: 'grid', gridTemplateColumns: '0.8fr 1fr auto', gap: '6px', marginBottom: '6px' }}>
+                <input aria-label={`학생 ${index + 1} 학번`} placeholder="학번" value={member.studentNumber} onChange={(event) => setStudentMembers((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, studentNumber: event.target.value } : item))} style={{ minWidth: 0, padding: '9px', border: '1px solid #cbd5e1', borderRadius: '7px' }} />
+                <input aria-label={`학생 ${index + 1} 이름`} placeholder="이름" value={member.name} onChange={(event) => setStudentMembers((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} style={{ minWidth: 0, padding: '9px', border: '1px solid #cbd5e1', borderRadius: '7px' }} />
+                <button type="button" aria-label={`학생 ${index + 1} 삭제`} disabled={studentMembers.length === 1} onClick={() => setStudentMembers((current) => current.filter((_, itemIndex) => itemIndex !== index))}>−</button>
+              </div>)}
+              <button type="button" onClick={() => setStudentMembers((current) => [...current, { studentNumber: '', name: '' }])} style={{ width: '100%', padding: '7px', border: '1px dashed #94a3b8', borderRadius: '7px', background: '#fff' }}>＋ 학생 추가</button>
+            </div>
+
             <button
               type="submit"
               style={{
@@ -104,7 +122,7 @@ export const HomePage: React.FC = () => {
         <div style={{ textAlign: 'center', paddingTop: '12px', borderTop: '1px solid #f1f5f9' }}>
           <span style={{ fontSize: '13px', color: '#64748b', marginRight: '8px' }}>선생님이신가요?</span>
           <button
-            onClick={() => navigate('/teacher')}
+            onClick={() => setTeacherLoginOpen((open) => !open)}
             style={{
               padding: '6px 12px',
               fontSize: '13px',
@@ -118,6 +136,7 @@ export const HomePage: React.FC = () => {
           >
             👨‍🏫 교사용 대시보드
           </button>
+          {teacherLoginOpen && <form onSubmit={(event) => { event.preventDefault(); if (teacherPassword !== '13579246') return alert('비밀번호가 올바르지 않습니다.'); sessionStorage.setItem('marketlab:teacher-auth', '1'); navigate('/teacher'); }} style={{ display: 'grid', gap: '7px', marginTop: '12px' }}><input aria-label="교사 비밀번호" type="password" value={teacherPassword} onChange={(event) => setTeacherPassword(event.target.value)} placeholder="교사 비밀번호" style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '7px' }} /><button type="submit" style={{ padding: '9px', background: '#2563eb', color: '#fff', border: 0, borderRadius: '7px', fontWeight: 700 }}>확인</button></form>}
         </div>
       </div>
     </div>

@@ -4,6 +4,7 @@ import { db } from './firebase/config';
 import { normalizeRoom } from './roomService';
 import { EMPTY_UPGRADES } from '../types/domain';
 import type { Company, CompanyUpgrades, InventoryItem, MachineAssetLot, Market, MarketRoundResult, ProductionPlan, Room, UpgradeType } from '../types/domain';
+import { EVENT_INTENSITY_SCALE } from '../types/domain';
 
 export interface ProductionQuote {
   rentCost: number; wageCost: number; unitMaterialCost: number; materialCost: number; policyCost: number; earlyTerminationCost: number; productionCost: number;
@@ -53,12 +54,16 @@ export const calculateWorkerMarginalProduct = (
   const effectiveMachines = 1 + Math.max(0, machines - 1) * (1 + upgrades.advancedEquipment * 0.12);
   const isRice = market.id === 'market_toy';
   const productivityBase = isRice ? technologyAdjustedBase * (1 + (machines - 1) * 0.12) : technologyAdjustedBase;
-  // 노동자 한 명이 추가될 때마다 한계생산물이 연속적으로 체감한다.
-  // 기계는 혼잡 증가 속도를 낮추지만, 분모 방식이라 추가 기계의 개선 폭도 점차 작아진다.
-  const congestion = isRice ? workerNumber - 1 : (workerNumber - 1) / effectiveMachines;
-  const baseDecayRate = Math.min(0.985, market.laborDecayRate + upgrades.workerTraining * 0.012);
-  const decayRate = isRice ? Math.min(0.985, baseDecayRate + (machines - 1) * 0.005) : baseDecayRate;
-  return Math.max(0.01, Number((productivityBase * Math.pow(decayRate, congestion)).toFixed(2)));
+  // 지수식은 기계가 많을 때 체감이 거의 사라졌다가 노동자가 늘면 급락했다.
+  // 완만한 1차항과 점차 커지는 2차항을 함께 사용해 P=MC 교차점이 선택 범위 안에 오게 한다.
+  const machineCongestionRelief = 1 + 0.2 * Math.max(0, effectiveMachines - 1);
+  // 훈련은 노동자의 기본 생산성을 높이고, 기계는 한계생산 체감의 속도를 늦춘다.
+  // 두 투자가 같은 효과로 보이지 않도록 훈련을 체감 완화식에서는 제외한다.
+  const laborLoad = Math.max(0, workerNumber - 1) / machineCongestionRelief;
+  const linearDecay = isRice ? 0.38 : market.id === 'market_shoes' ? 0.32 : 0.28;
+  const quadraticDecay = isRice ? 0.045 : market.id === 'market_shoes' ? 0.035 : 0.03;
+  const gradualDiminishingFactor = 1 + linearDecay * laborLoad + quadraticDecay * laborLoad * laborLoad;
+  return Math.max(0.01, Number((productivityBase / gradualDiminishingFactor).toFixed(2)));
 };
 
 export const calculateProductionCapacity = (
@@ -90,7 +95,7 @@ export const calculateFirmSupplyCurve = (
     const marginalProduct = calculateWorkerMarginalProduct(company, index + 1, machineCount, technologyLevel, market);
     cumulativeQuantity += marginalProduct;
     return {
-      quantity: Math.floor(cumulativeQuantity),
+      quantity: Math.min(market.landCapacityPerCycle || Number.POSITIVE_INFINITY, Math.floor(cumulativeQuantity)),
       marginalCost: Math.round(unitMaterialCost + unitPolicyCost + market.wagePerWorker / marginalProduct),
     };
   }).filter((point, index, points) => point.quantity > (points[index - 1]?.quantity ?? 0));
@@ -98,6 +103,9 @@ export const calculateFirmSupplyCurve = (
 
 export const findFirmMarginalCost = (curve: Array<{ quantity: number; marginalCost: number }>, quantity: number) =>
   curve.find((point) => quantity <= point.quantity)?.marginalCost ?? null;
+
+export const findProfitMaximizingQuantity = (curve: Array<{ quantity: number; marginalCost: number }>, marketPrice: number) =>
+  curve.reduce((quantity, point) => point.marginalCost <= marketPrice ? point.quantity : quantity, 0);
 
 // 증원한 라운드의 다음 라운드까지 고용을 유지하고, 그 이후부터 감원할 수 있다.
 // 규칙 도입 전에 만들어진 기업은 현재 라운드 한 번만 기존 인원을 보호한다.
@@ -222,6 +230,7 @@ export const calculateProductionQuote = (
   const allocatedInvestmentCost = depreciationCost + Math.round(researchCost / 3) + Math.round(setupCost / 4);
   // 수리는 당기 설비 유지비이므로 현금지출뿐 아니라 당기 이윤에도 전액 반영한다.
   const economicCost = productionCost + allocatedInvestmentCost + earlyTerminationCost + machineRepairCost;
+  // 학생이 노동자를 직접 늘리며 한계생산물 체감과 한계비용 상승을 확인하도록 현재 고용 범위까지만 그린다.
   const supplyCurve = calculateFirmSupplyCurve(upgradedCompany, market, workerCount, machineCountAfter, technologyLevelAfter);
   const marginalCost = findFirmMarginalCost(supplyCurve, requestedQuantity);
   const nextMarginalCost = requestedQuantity < landLimitedCapacity ? findFirmMarginalCost(supplyCurve, requestedQuantity + 1) : null;
@@ -240,7 +249,7 @@ export const calculateProductionQuote = (
 
 interface ConfirmProductionInput {
   roomId: string; companyId: string; marketId: string; requestedQuantity: number;
-  workerCount: number; machinePurchases: number; machineSales?: number; machineRepairs?: number; researchLevels?: number; upgradePurchase?: UpgradeType | null; askingPrice?: number; pricePrediction?: 'UP' | 'SAME' | 'DOWN';
+  workerCount: number; machinePurchases: number; machineSales?: number; machineRepairs?: number; researchLevels?: number; upgradePurchase?: UpgradeType | null; askingPrice?: number; offeredQuantity?: number; pricePrediction?: 'UP' | 'SAME' | 'DOWN';
 }
 
 const updateMachineAssets = (assets: MachineAssetLot[], marketId: string, sales: number, purchases: number, purchasePrice: number, roundNumber: number) => {
@@ -360,7 +369,7 @@ export const calculateCompetitiveMarket = (market: Market, studentSupply: number
   };
 };
 
-const allocateProportionally = (plans: ProductionPlan[], availableDemand: number) => {
+const allocateProportionally = (plans: ProductionPlan[], availableDemand: number, ecoPreferenceBoost = 0) => {
   const allocations = new Map<string, number>();
   const totalOffered = plans.reduce((sum, plan) => sum + (plan.offeredQuantity ?? plan.producedQuantity), 0);
   const target = Math.min(totalOffered, Math.max(0, Math.floor(availableDemand)));
@@ -368,9 +377,11 @@ const allocateProportionally = (plans: ProductionPlan[], availableDemand: number
     plans.forEach((plan) => allocations.set(plan.id, 0));
     return allocations;
   }
+  const weightedTotal = plans.reduce((sum, plan) => sum + (plan.offeredQuantity ?? plan.producedQuantity) * (1 + (plan.upgradesAfter?.ecoProduction || 0) * ecoPreferenceBoost), 0);
   const shares = plans.map((plan) => {
     const offered = plan.offeredQuantity ?? plan.producedQuantity;
-    const exact = target * offered / totalOffered;
+    const weight = offered * (1 + (plan.upgradesAfter?.ecoProduction || 0) * ecoPreferenceBoost);
+    const exact = target * weight / Math.max(1, weightedTotal);
     return { plan, offered, allocated: Math.floor(exact), fraction: exact - Math.floor(exact) };
   });
   let remainder = target - shares.reduce((sum, item) => sum + item.allocated, 0);
@@ -386,6 +397,7 @@ const allocateProportionally = (plans: ProductionPlan[], availableDemand: number
 const matchCheapestOffers = (
   offers: ProductionPlan[],
   demandAtPrice: (price: number) => number,
+  ecoPreferenceBoost = 0,
 ) => {
   const allocations = new Map<string, number>();
   offers.forEach((plan) => allocations.set(plan.id, 0));
@@ -397,14 +409,14 @@ const matchCheapestOffers = (
   });
   [...priceGroups.entries()].sort(([priceA], [priceB]) => priceA - priceB).forEach(([price, group]) => {
     const remainingBuyers = Math.max(0, demandAtPrice(price) - matchedDemand);
-    const groupAllocations = allocateProportionally(group, remainingBuyers);
+    const groupAllocations = allocateProportionally(group, remainingBuyers, ecoPreferenceBoost);
     group.forEach((plan) => allocations.set(plan.id, groupAllocations.get(plan.id) || 0));
     matchedDemand += [...groupAllocations.values()].reduce((sum, quantity) => sum + quantity, 0);
   });
   return allocations;
 };
 
-export const calculateMarketClearing = (market: Market, plans: ProductionPlan[], demandMultiplier = 1) => {
+export const calculateMarketClearing = (market: Market, plans: ProductionPlan[], demandMultiplier = 1, ecoPreferenceBoost = 0) => {
   const soldByPlan = new Map<string, number>();
   const offers = plans.filter((plan) => (plan.offeredQuantity ?? plan.producedQuantity) > 0);
   const totalSupply = offers.reduce((sum, plan) => sum + (plan.offeredQuantity ?? plan.producedQuantity), 0);
@@ -413,7 +425,7 @@ export const calculateMarketClearing = (market: Market, plans: ProductionPlan[],
   let demandQuantity = calculateMarketDemand(market, marketPrice, demandMultiplier);
   if (market.marketType === 'OLIGOPOLY') {
     const competitionMultiplier = demandMultiplier / (1 + market.competitionSensitivity * Math.max(0, participantCount - 1));
-    const allocations = matchCheapestOffers(offers, (price) => calculateMarketDemand(market, price, competitionMultiplier));
+    const allocations = matchCheapestOffers(offers, (price) => calculateMarketDemand(market, price, competitionMultiplier), ecoPreferenceBoost);
     allocations.forEach((quantity, planId) => soldByPlan.set(planId, quantity));
     demandQuantity = calculateMarketDemand(market, market.basePrice, competitionMultiplier);
     const matchedValue = offers.reduce((sum, plan) => sum + (soldByPlan.get(plan.id) || 0) * (plan.askingPrice || market.announcedPrice), 0);
@@ -426,6 +438,7 @@ export const calculateMarketClearing = (market: Market, plans: ProductionPlan[],
     const allocations = matchCheapestOffers(
       offers,
       (askingPrice) => askingPrice <= marketPrice ? demandQuantity : 0,
+      ecoPreferenceBoost,
     );
     allocations.forEach((quantity, planId) => soldByPlan.set(planId, quantity));
   }
@@ -477,9 +490,10 @@ export const productionService = {
     if (!Number.isInteger(requestedQuantity) || requestedQuantity < 0) throw new Error('INVALID_PRODUCTION_QUANTITY');
     if (!Number.isInteger(workerCount) || workerCount < 1) throw new Error('INVALID_WORKER_COUNT');
     if (!Number.isInteger(machinePurchases) || machinePurchases < 0) throw new Error('INVALID_INVESTMENT');
-    if (machinePurchases > 1) throw new Error('MACHINE_PURCHASE_LIMIT');
+    if (machinePurchases > 2) throw new Error('MACHINE_PURCHASE_LIMIT');
     if (!Number.isInteger(machineSales) || machineSales < 0) throw new Error('INVALID_MACHINE_SALE');
     if (!Number.isInteger(machineRepairs) || machineRepairs < 0) throw new Error('INVALID_MACHINE_REPAIR');
+    if (input.offeredQuantity !== undefined && (!Number.isInteger(input.offeredQuantity) || input.offeredQuantity < 0)) throw new Error('INVALID_OFFERED_QUANTITY');
     if (upgradePurchase && !['advancedEquipment', 'workerTraining', 'materialEfficiency', 'ecoProduction'].includes(upgradePurchase)) throw new Error('INVALID_INVESTMENT');
 
     const roomRef = doc(db, 'rooms', roomId);
@@ -500,6 +514,11 @@ export const productionService = {
       if (!isRice && requestedQuantity === 0) throw new Error('INVALID_PRODUCTION_QUANTITY');
       if (!Number.isFinite(input.askingPrice) || (input.askingPrice || 0) <= 0) throw new Error('INVALID_ASKING_PRICE');
       const company = companySnapshot.data() as Company;
+      const referencePrice = market.publicPrice ?? market.basePrice;
+      const prediction = input.pricePrediction || 'SAME';
+      const minimumAskingPrice = Math.max(100, referencePrice * (prediction === 'DOWN' ? 0.7 : prediction === 'SAME' ? 0.95 : 1));
+      const maximumAskingPrice = referencePrice * (prediction === 'UP' ? 1.3 : prediction === 'SAME' ? 1.05 : 1);
+      if ((input.askingPrice || 0) < minimumAskingPrice || (input.askingPrice || 0) > maximumAskingPrice) throw new Error('PRICE_OUT_OF_RANGE');
       if (company.currentMarketId && company.currentMarketId !== market.id) throw new Error('MARKET_EXIT_REQUIRED');
       if (room.currentRound === 1 && company.traitsConfirmed === false) throw new Error('COMPANY_TRAITS_REQUIRED');
       const planId = `${companyId}_${room.currentRound}`;
@@ -537,12 +556,18 @@ export const productionService = {
       const nextQuantity = previousQuantity + producedQuantity;
       const previousValue = previous ? previous.quantity * previous.averageUnitCost : 0;
       const isRiceHarvestRound = isRice && room.currentRound % market.productionCycleRounds === 0;
+      const maximumRequestedOffer = previousQuantity + requestedQuantity;
+      if ((input.offeredQuantity ?? maximumRequestedOffer) > maximumRequestedOffer) throw new Error('OFFERED_QUANTITY_EXCEEDED');
+      // 재해로 실제 생산량이 줄면 학생의 희망 수량도 실제 보유 재고까지만 자동 조정한다.
+      const offeredQuantity = isRice && !isRiceHarvestRound
+        ? 0
+        : Math.min(input.offeredQuantity ?? nextQuantity, nextQuantity);
       const inventory: InventoryItem = {
         productId: market.id, productName: market.name, productIcon: market.icon, quantity: nextQuantity,
         averageUnitCost: nextQuantity > 0 ? Math.round((previousValue + quote.economicCost) / nextQuantity) : 0, updatedAt: now,
       };
       const plan: ProductionPlan = {
-        id: planId, roomId, companyId, productId: market.id, marketName: market.name, announcedPrice: market.announcedPrice,
+        id: planId, roomId, companyId, productId: market.id, marketName: market.name, announcedPrice: referencePrice,
         roundNumber: room.currentRound, requestedQuantity, producedQuantity, workerCount,
         productionCapacity: quote.productionCapacity, marginalProduct: quote.currentMarginalProduct, marginalCost: quote.marginalCost,
         supplyCurve: quote.supplyCurve,
@@ -553,7 +578,7 @@ export const productionService = {
         investmentCost: quote.investmentCost, totalCost: quote.totalCost, openingCash: company.cash, spendingLimit: quote.spendingLimit,
         depreciationCost: quote.depreciationCost, allocatedInvestmentCost: quote.allocatedInvestmentCost,
         machineSales, machineResaleRevenue: quote.machineResaleRevenue, machineRepairs, machineRepairCost: quote.machineRepairCost,
-        askingPrice: input.askingPrice, pricePrediction: input.pricePrediction || 'SAME', offeredQuantity: isRice ? (isRiceHarvestRound ? nextQuantity : 0) : producedQuantity, soldQuantity: 0, marketPrice: null, revenue: 0,
+        askingPrice: input.askingPrice, pricePrediction: input.pricePrediction || 'SAME', offeredQuantity, soldQuantity: 0, marketPrice: null, revenue: 0,
         profit: -quote.economicCost, operatingProfit: -quote.productionCost, economicProfit: -quote.economicCost,
         cashFlow: -quote.netCashCost, settlementStatus: 'PENDING',
         ...(isRice ? {
@@ -692,8 +717,8 @@ export const productionService = {
       const nextMarkets = room.markets.map((market) => {
         const marketPlans = plans.filter((plan) => plan.productId === market.id);
           const demandEvent = room.demandEvents.find((event) => event.marketId === market.id);
-          const demandMultiplier = demandEvent?.effectType === 'SUPPLY' ? 1 : scaleMarketEventFactor(demandEvent?.multiplier, market.demandEventEffectScale);
-          const clearing = calculateMarketClearing(market, marketPlans, demandMultiplier);
+          const demandMultiplier = demandEvent?.effectType === 'SUPPLY' ? 1 : scaleMarketEventFactor(demandEvent?.multiplier, EVENT_INTENSITY_SCALE[demandEvent?.demandIntensity || 'MEDIUM']);
+          const clearing = calculateMarketClearing(market, marketPlans, demandMultiplier, demandEvent?.ecoPreferenceBoost || 0);
         const resultRef = doc(db, 'rooms', roomId, 'marketResults', `${room.currentRound}_${market.id}`);
         const result: MarketRoundResult = {
           id: `${room.currentRound}_${market.id}`, roomId, roundNumber: room.currentRound,
@@ -732,7 +757,11 @@ export const productionService = {
             settlementStatus: 'SETTLED',
           });
         });
-        return market;
+        return {
+          ...market,
+          publicPrice: clearing.marketPrice ?? market.publicPrice ?? market.announcedPrice,
+          publicPriceRound: room.currentRound,
+        };
       });
 
       transaction.update(roomRef, { roundPhase: 'RESULT', markets: nextMarkets });

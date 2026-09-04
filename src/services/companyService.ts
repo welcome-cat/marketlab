@@ -11,8 +11,8 @@ import {
 } from 'firebase/firestore';
 import type { Unsubscribe } from 'firebase/firestore';
 import { db } from './firebase/config';
-import type { Company } from '../types/domain';
-import { EMPTY_UPGRADES, INDUSTRY_TRAITS, TECHNOLOGIES } from '../types/domain';
+import type { Company, StudentMember } from '../types/domain';
+import { EMPTY_UPGRADES, INDUSTRY_TRAITS, INITIAL_COMPANY_CASH, TECHNOLOGIES } from '../types/domain';
 
 const randomAdjustment = (range: number) =>
   Math.floor(Math.random() * (range * 2 + 1)) - range;
@@ -139,6 +139,7 @@ export const companyService = {
   registerCompany: async (
     roomId: string,
     companyName: string,
+    studentMembers: StudentMember[] = [],
   ): Promise<Company> => {
     const trimmedName = validateCompanyName(companyName);
     const normalizedName = normalizeCompanyName(trimmedName);
@@ -213,7 +214,7 @@ export const companyService = {
         roomId,
         name: trimmedName,
         normalizedName,
-        cash: 300000,
+        cash: INITIAL_COMPANY_CASH,
         technologyId: defaultTech.id,
         technologyName: defaultTech.name,
         technologyDescription: defaultTech.description,
@@ -225,6 +226,9 @@ export const companyService = {
         employeeCount: 1,
         machineAssets: [],
         technologyLevel: 0,
+        studentMembers: studentMembers
+          .map((member) => ({ studentNumber: member.studentNumber.trim(), name: member.name.trim() }))
+          .filter((member) => member.studentNumber && member.name),
         status: 'ACTIVE',
         createdAt: now,
         joinedAt: now,
