@@ -476,6 +476,15 @@ input[type='range']::-moz-range-thumb:hover {
 .teacher-login { min-height: 100vh; display: grid; place-items: center; padding: 20px; background: #f8fafc; }
 .teacher-login form { width: min(390px, 100%); display: grid; gap: 10px; padding: 28px; border: 1px solid #e2e8f0; border-radius: 16px; background: #fff; }
 .teacher-login input, .teacher-login button { padding: 11px; }
+.home-qr-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 20px; background: rgba(15,23,42,.58); backdrop-filter: blur(4px); }
+.home-qr-modal { display: grid; justify-items: center; gap: 14px; width: min(390px,100%); padding: 24px; border-radius: 18px; background: #fff; box-shadow: 0 24px 60px rgba(15,23,42,.3); text-align: center; }
+.home-qr-heading { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 12px; }
+.home-qr-heading h2 { margin: 0; font-size: 20px; }
+.home-qr-heading button { width: 36px; height: 36px; padding: 0; border: 1px solid #cbd5e1; border-radius: 50%; background: #fff; }
+.home-qr-modal p { margin: 0; color: #64748b; font-size: 13px; }
+.home-qr-code { padding: 12px; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; line-height: 0; }
+.home-qr-modal a { max-width: 100%; color: #2563eb; font-size: 12px; overflow-wrap: anywhere; }
+.home-qr-copy { width: 100%; padding: 10px; border: 0; border-radius: 9px; background: #0f766e; color: #fff; font-weight: 800; }
 .event-effect-labels { display: grid; gap: 4px; margin-top: 8px; padding: 8px; border-radius: 8px; background: #fff7ed; color: #9a3412; font-size: 12px; font-weight: 800; }
 .news-editor { margin-top: 10px; padding: 9px; border-radius: 8px; background: #f8fafc; }
 .news-editor summary { cursor: pointer; font-weight: 800; }

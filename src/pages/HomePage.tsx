@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { QRCodeSVG } from 'qrcode.react';
 
 export const HomePage: React.FC = () => {
   const navigate = useNavigate();
@@ -8,6 +9,8 @@ export const HomePage: React.FC = () => {
   const [studentMembers, setStudentMembers] = useState([{ studentNumber: '', name: '' }]);
   const [teacherLoginOpen, setTeacherLoginOpen] = useState(false);
   const [teacherPassword, setTeacherPassword] = useState('');
+  const [qrOpen, setQrOpen] = useState(false);
+  const appUrl = (import.meta.env.VITE_PUBLIC_APP_URL as string | undefined)?.trim() || window.location.origin;
 
   const handleJoinStudent = (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,9 +135,11 @@ export const HomePage: React.FC = () => {
           >
             👨‍🏫 교사용 대시보드
           </button>
+          <button type="button" onClick={() => setQrOpen(true)} style={{ marginLeft: '7px', padding: '6px 12px', fontSize: '13px', fontWeight: 600, color: '#0f766e', background: '#f0fdfa', border: '1px solid #99f6e4', borderRadius: '6px', cursor: 'pointer' }}>📱 접속 QR</button>
           {teacherLoginOpen && <form onSubmit={(event) => { event.preventDefault(); if (teacherPassword !== '13579246') return alert('비밀번호가 올바르지 않습니다.'); sessionStorage.setItem('marketlab:teacher-auth', '1'); navigate('/teacher'); }} style={{ display: 'grid', gap: '7px', marginTop: '12px' }}><input aria-label="교사 비밀번호" type="password" value={teacherPassword} onChange={(event) => setTeacherPassword(event.target.value)} placeholder="교사 비밀번호" style={{ padding: '10px', border: '1px solid #cbd5e1', borderRadius: '7px' }} /><button type="submit" style={{ padding: '9px', background: '#2563eb', color: '#fff', border: 0, borderRadius: '7px', fontWeight: 700 }}>확인</button></form>}
         </div>
       </div>
+      {qrOpen && <div className="home-qr-overlay" role="dialog" aria-modal="true" aria-labelledby="home-qr-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setQrOpen(false); }}><section className="home-qr-modal"><div className="home-qr-heading"><h2 id="home-qr-title">📱 수업 접속 QR</h2><button type="button" onClick={() => setQrOpen(false)} aria-label="QR 코드 닫기">✕</button></div><p>학생들이 휴대전화 카메라로 스캔하면 로그인 화면으로 이동합니다.</p><div className="home-qr-code"><QRCodeSVG value={appUrl} size={260} level="H" includeMargin title="공급시뮬레이션 수업 접속 QR 코드" /></div><a href={appUrl}>{appUrl}</a><button type="button" className="home-qr-copy" onClick={() => void navigator.clipboard.writeText(appUrl)}>주소 복사</button></section></div>}
     </div>
   );
 };
