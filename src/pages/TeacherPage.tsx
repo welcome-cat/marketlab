@@ -154,7 +154,24 @@ export const TeacherPage: React.FC = () => {
     try {
       setLoading(true);
       await roomService.createRoom(roomId.trim(), title.trim());
-      const demandEvents: DemandEvent[] = MARKETS.map((market) => ({ marketId: market.id, optionId: 'baseline', factor: 'BASELINE', title: '수요 변화 없음', description: '특별한 수요 변화 요인이 없습니다.', multiplier: 1, articleHeadline: `${market.name}, 평온한 흐름 이어져`, articleBody: '관련 업계에서는 최근 소비 환경에 뚜렷한 변화가 관찰되지 않고 있다고 전했습니다.', generatedBy: 'TEMPLATE' }));
+      const demandEvents: DemandEvent[] = MARKETS.map((market) => ({
+        marketId: market.id,
+        optionId: 'baseline',
+        factor: 'BASELINE',
+        effectType: 'DEMAND',
+        title: '수요 변화 없음',
+        description: '특별한 수요 변화 요인이 없습니다.',
+        multiplier: 1,
+        articleHeadline: DEFAULT_NEWS_TEMPLATES.baseline?.headline || `${market.name}, 평온한 흐름 이어져`,
+        articleBody: DEFAULT_NEWS_TEMPLATES.baseline?.body || '관련 업계에서는 최근 소비 환경에 뚜렷한 변화가 관찰되지 않고 있다고 전했습니다.',
+        supplyOptionId: 'supply_baseline',
+        supplyFactor: 'BASELINE',
+        supplyTitle: '공급 변화 없음',
+        supplyDescription: '특별한 공급 변화 요인이 없습니다.',
+        supplyArticleHeadline: DEFAULT_NEWS_TEMPLATES.supply_baseline?.headline || `${market.name} 생산 현장, 평소 흐름 이어져`,
+        supplyArticleBody: DEFAULT_NEWS_TEMPLATES.supply_baseline?.body || '특별한 공급 변화 요인이 없습니다.',
+        generatedBy: 'TEMPLATE',
+      }));
       setActiveRoom({ id: roomId.trim(), title: title.trim(), markets: MARKETS, currentRound: 1, status: 'WAITING', roundPhase: 'DECISION', demandEvents, pendingDemandEvents: [], unlockRounds: DEFAULT_UNLOCK_ROUNDS, economicsQuizzes: DEFAULT_ECONOMICS_QUIZZES, reflectionInterval: 3, reflectionSheets: DEFAULT_REFLECTION_SHEETS, createdAt: Date.now() });
       setQuizDraft(DEFAULT_ECONOMICS_QUIZZES);
       setMarketInfluenceDraft(influenceFromMarkets(MARKETS));

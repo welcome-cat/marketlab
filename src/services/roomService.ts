@@ -3,20 +3,31 @@ import type { DocumentData, DocumentReference, QueryDocumentSnapshot, QuerySnaps
 import { db } from './firebase/config';
 import type { DemandEvent, EconomicsQuiz, Market, ReflectionSheet, Room } from '../types/domain';
 import { DEFAULT_ECONOMICS_QUIZZES, DEFAULT_REFLECTION_SHEETS, DEFAULT_UNLOCK_ROUNDS, DEMAND_EVENT_OPTIONS, EVENT_INTENSITY_SCALE, MARKETS } from '../types/domain';
-import { getRecoveryMessage } from './newsService';
+import { defaultNewsTemplates, getRecoveryMessage } from './newsService';
 
-const baselineEvents = (): DemandEvent[] => MARKETS.map((market) => ({
-  marketId: market.id,
-  optionId: 'baseline',
-  factor: 'BASELINE',
-  effectType: 'DEMAND',
-  title: '수요 변화 없음',
-  description: '특별한 수요 변화 요인이 없습니다.',
-  multiplier: 1,
-  articleHeadline: `${market.name}, 평온한 흐름 이어져`,
-  articleBody: '관련 업계에서는 최근 소비 환경에 뚜렷한 변화가 관찰되지 않고 있다고 전했습니다.',
-  generatedBy: 'TEMPLATE',
-}));
+const baselineEvents = (templates?: Record<string, { headline: string; body: string }>): DemandEvent[] => {
+  const allTemplates = { ...defaultNewsTemplates(), ...(templates || {}) };
+  const demandTpl = allTemplates.baseline;
+  const supplyTpl = allTemplates.supply_baseline;
+  return MARKETS.map((market) => ({
+    marketId: market.id,
+    optionId: 'baseline',
+    factor: 'BASELINE',
+    effectType: 'DEMAND',
+    title: '수요 변화 없음',
+    description: '특별한 수요 변화 요인이 없습니다.',
+    multiplier: 1,
+    articleHeadline: demandTpl?.headline || `${market.name}, 평온한 흐름 이어져`,
+    articleBody: demandTpl?.body || '관련 업계에서는 최근 소비 환경에 뚜렷한 변화가 관찰되지 않고 있다고 전했습니다.',
+    supplyOptionId: 'supply_baseline',
+    supplyFactor: 'BASELINE',
+    supplyTitle: '공급 변화 없음',
+    supplyDescription: '특별한 공급 변화 요인이 없습니다.',
+    supplyArticleHeadline: supplyTpl?.headline || `${market.name} 생산 현장, 평소 흐름 이어져`,
+    supplyArticleBody: supplyTpl?.body || '특별한 공급 변화 요인이 없습니다.',
+    generatedBy: 'TEMPLATE',
+  }));
+};
 
 const normalizeDemandEvent = (event: Partial<DemandEvent>, market: Market): DemandEvent => ({
   marketId: market.id,
@@ -245,7 +256,7 @@ export const roomService = {
       if (!snapshot.exists()) throw new Error('ROOM_NOT_FOUND');
       const room = normalizeRoom(snapshot.id, snapshot.data() as Partial<Room>);
       if (room.status !== 'WAITING') throw new Error('ROOM_ALREADY_STARTED');
-      const selectedEvents = room.pendingDemandEvents.length === room.markets.length ? room.pendingDemandEvents : baselineEvents();
+      const selectedEvents = room.pendingDemandEvents.length === room.markets.length ? room.pendingDemandEvents : baselineEvents(room.newsTemplates);
       const nextEvents = withRecoveryNews(selectedEvents, room.demandEvents, room.newsTemplates);
       transaction.update(roomRef, {
         status: 'RUNNING',
@@ -266,7 +277,7 @@ export const roomService = {
       const room = normalizeRoom(snapshot.id, snapshot.data() as Partial<Room>);
       if (room.status !== 'RUNNING') throw new Error('ROOM_NOT_RUNNING');
       if (room.roundPhase !== 'RESULT') throw new Error('ROUND_NOT_SETTLED');
-      const selectedEvents = room.pendingDemandEvents.length === room.markets.length ? room.pendingDemandEvents : baselineEvents();
+      const selectedEvents = room.pendingDemandEvents.length === room.markets.length ? room.pendingDemandEvents : baselineEvents(room.newsTemplates);
       const nextEvents = withRecoveryNews(selectedEvents, room.demandEvents, room.newsTemplates);
       transaction.update(roomRef, {
         currentRound: room.currentRound + 1,
