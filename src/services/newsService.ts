@@ -48,36 +48,183 @@ const signalFor = (option: DemandEventOption, index = 0) => {
   return '판매업계는 이러한 소비자 행동이 실제 구매로 얼마나 이어질지 예의주시하고 있다';
 };
 
-export const defaultNewsTemplates = (): Record<string, { headline: string; body: string }> => Object.fromEntries(
-  DEMAND_EVENT_OPTIONS
-    .filter((option) => !['baseline', 'supply_baseline'].includes(option.id))
-    .map((option) => [option.id, {
-      headline: ({
-        income_up: '지갑에 생긴 여유, 유통가 방문과 구매 계획에 온기', income_down: '생활비 부담 커진 가계, 장바구니부터 다시 살핀다',
-        preference_up: '온라인 달군 새 유행, 매장 문의도 빠르게 늘어', preference_down: '번지는 단기 불매 움직임, 구매 직전 발길 돌리는 소비자들',
-        eco_preference: '가격 같다면 친환경 제품…소비자의 선택 기준 달라졌다', substitute_up: '경쟁 상품 가격표 바뀌자 비교 구매 움직임 분주',
-        substitute_down: '경쟁 상품 할인 확산, 소비자 시선 저렴한 대안으로', complement_up: '함께 쓰는 상품 가격 올라 묶음 구매 부담 커져',
-        complement_down: '관련 상품 가격 안정, 함께 구매하려는 발길 늘어', expect_price_up: '“더 오르기 전에 사자”…구매 서두르는 소비자들',
-        expect_price_down: '할인 기대감에 지갑 닫은 소비자, 구매 시기 저울질', consumers_up: '새 소비층 유입에 상권 활기…매장 방문객 증가',
-        consumers_down: '상권 떠나는 소비층…한산해진 매장과 줄어든 문의', material_up: '원재료값 상승에 생산업계 긴장…원가 계산 다시 한다',
-        material_down: '원료 조달비 안정…생산 계획에 여유 생긴 업체들', wage_up: '구인 경쟁에 인건비 상승…생산 현장 비용 부담 확대',
-        wage_down: '인력 확보 여건 개선…업체들 생산 일정 재검토', rent_up: '오른 임대료에 고정비 부담…사업장 운영 전략 고심',
-        rent_down: '임대료 안정에 숨통 트인 업체들, 생산 여력 점검', technology_progress: '새 공정 확산으로 작업시간 단축…생산 현장 효율 개선',
-        suppliers_up: '새 업체 잇단 진입…도매시장 출하 경쟁 치열', suppliers_down: '생산자 이탈에 납품처 감소…유통업계 물량 확보 분주',
-        producer_expect_up: '더 나은 가격 기다리는 생산자들, 출하 대신 보관 선택', producer_expect_down: '가격 약세 전망에 출하 서두르는 생산업계',
-        rice_typhoon: '태풍 지나간 산지, 침수·쓰러짐 피해에 수확량 우려', producer_tax: '생산 단계 새 세금…업체들 단위당 비용 재산정',
-        producer_subsidy: '생산 지원금 지급 시작…미뤘던 생산계획 다시 꺼낸다',
-      } as Record<string, string>)[option.id] || `${option.title}, 시장 참여자 움직임에 변수`,
-      body: [
-        option.effectType === 'SUPPLY' ? '최근 생산과 출하 현장에서 평소와 다른 움직임이 관찰되고 있다.' : '최근 소비 현장에서 평소와 다른 움직임이 관찰되고 있다.',
-        `${signalFor(option, 0)}.`,
-        `${signalFor(option, 1)}.`,
-        option.effectType === 'SUPPLY' ? '업체들은 비용과 생산능력, 시장에 내놓을 물량을 다시 계산하고 있다.' : '유통업계는 방문객 수와 구매 시기, 상품 비교 방식의 변화를 주시하고 있다.',
-        option.effectType === 'SUPPLY' ? '도매시장 관계자들은 실제 출하 물량이 확인될 때까지 상황을 지켜봐야 한다고 전했다.' : '아직 실제 거래 결과가 나오지 않아 소비자의 최종 선택을 단정하기는 이르다.',
-        '시장 참여 기업들은 기사 속 단서를 바탕으로 다음 거래의 가격과 물량 전략을 세워야 할 것으로 보인다.',
-      ].join('\n'),
-    }]),
-);
+export interface RecoveryTemplateOption {
+  id: string;
+  templateKey: string;
+  sourceEventTitle: string;
+  effectType: 'DEMAND' | 'SUPPLY';
+  defaultDirection: string;
+  defaultReason: string;
+  defaultHeadline: string;
+  defaultBody: string;
+}
+
+export const RECOVERY_TEMPLATE_OPTIONS: RecoveryTemplateOption[] = [
+  {
+    id: 'income_up',
+    templateKey: 'recovery_income_up',
+    sourceEventTitle: '소득 증가',
+    effectType: 'DEMAND',
+    defaultDirection: '수요 감소',
+    defaultReason: '일시적으로 증가했던 소득이 평소 수준으로 돌아왔습니다',
+    defaultHeadline: '수요 감소: 일시적으로 증가했던 소득이 평소 수준으로 돌아왔습니다',
+    defaultBody: '일시적으로 증가했던 소득이 평소 수준으로 돌아왔습니다. 이 정상화 효과와 이번 라운드의 새로운 사건은 함께 시장에 반영됩니다.',
+  },
+  {
+    id: 'income_down',
+    templateKey: 'recovery_income_down',
+    sourceEventTitle: '소득 감소',
+    effectType: 'DEMAND',
+    defaultDirection: '수요 증가',
+    defaultReason: '일시적으로 감소했던 소득이 평소 수준으로 돌아왔습니다',
+    defaultHeadline: '수요 증가: 일시적으로 감소했던 소득이 평소 수준으로 돌아왔습니다',
+    defaultBody: '일시적으로 감소했던 소득이 평소 수준으로 돌아왔습니다. 이 정상화 효과와 이번 라운드의 새로운 사건은 함께 시장에 반영됩니다.',
+  },
+  {
+    id: 'preference_up',
+    templateKey: 'recovery_preference_up',
+    sourceEventTitle: '단기 유행',
+    effectType: 'DEMAND',
+    defaultDirection: '수요 감소',
+    defaultReason: '단기 유행이 끝나 수요가 유행 이전 수준으로 돌아왔습니다',
+    defaultHeadline: '수요 감소: 단기 유행이 끝나 수요가 유행 이전 수준으로 돌아왔습니다',
+    defaultBody: '단기 유행이 끝나 수요가 유행 이전 수준으로 돌아왔습니다. 이 정상화 효과와 이번 라운드의 새로운 사건은 함께 시장에 반영됩니다.',
+  },
+  {
+    id: 'preference_down',
+    templateKey: 'recovery_preference_down',
+    sourceEventTitle: '단기 불매',
+    effectType: 'DEMAND',
+    defaultDirection: '수요 증가',
+    defaultReason: '단기 불매운동이 끝나 수요가 이전 수준으로 회복되었습니다',
+    defaultHeadline: '수요 증가: 단기 불매운동이 끝나 수요가 이전 수준으로 회복되었습니다',
+    defaultBody: '단기 불매운동이 끝나 수요가 이전 수준으로 회복되었습니다. 이 정상화 효과와 이번 라운드의 새로운 사건은 함께 시장에 반영됩니다.',
+  },
+  {
+    id: 'expect_price_up',
+    templateKey: 'recovery_expect_price_up',
+    sourceEventTitle: '미래 가격 상승 예상',
+    effectType: 'DEMAND',
+    defaultDirection: '수요 감소',
+    defaultReason: '미래 가격 상승 예상이 해소되어 앞당겨졌던 구매가 정상화되었습니다',
+    defaultHeadline: '수요 감소: 미래 가격 상승 예상이 해소되어 앞당겨졌던 구매가 정상화되었습니다',
+    defaultBody: '미래 가격 상승 예상이 해소되어 앞당겨졌던 구매가 정상화되었습니다. 이 정상화 효과와 이번 라운드의 새로운 사건은 함께 시장에 반영됩니다.',
+  },
+  {
+    id: 'expect_price_down',
+    templateKey: 'recovery_expect_price_down',
+    sourceEventTitle: '미래 가격 하락 예상',
+    effectType: 'DEMAND',
+    defaultDirection: '수요 증가',
+    defaultReason: '미래 가격 하락 예상이 해소되어 미뤄졌던 구매가 정상화되었습니다',
+    defaultHeadline: '수요 증가: 미래 가격 하락 예상이 해소되어 미뤄졌던 구매가 정상화되었습니다',
+    defaultBody: '미래 가격 하락 예상이 해소되어 미뤄졌던 구매가 정상화되었습니다. 이 정상화 효과와 이번 라운드의 새로운 사건은 함께 시장에 반영됩니다.',
+  },
+  {
+    id: 'producer_expect_up',
+    templateKey: 'recovery_producer_expect_up',
+    sourceEventTitle: '생산자 미래 가격 상승 예상',
+    effectType: 'SUPPLY',
+    defaultDirection: '공급 증가',
+    defaultReason: '미래 가격 상승 예상이 해소되어 미뤄졌던 판매가 정상화되었습니다',
+    defaultHeadline: '공급 증가: 미래 가격 상승 예상이 해소되어 미뤄졌던 판매가 정상화되었습니다',
+    defaultBody: '미래 가격 상승 예상이 해소되어 미뤄졌던 판매가 정상화되었습니다. 이 정상화 효과와 이번 라운드의 새로운 사건은 함께 시장에 반영됩니다.',
+  },
+  {
+    id: 'producer_expect_down',
+    templateKey: 'recovery_producer_expect_down',
+    sourceEventTitle: '생산자 미래 가격 하락 예상',
+    effectType: 'SUPPLY',
+    defaultDirection: '공급 감소',
+    defaultReason: '미래 가격 하락 예상이 해소되어 앞당겨졌던 판매가 정상화되었습니다',
+    defaultHeadline: '공급 감소: 미래 가격 하락 예상이 해소되어 앞당겨졌던 판매가 정상화되었습니다',
+    defaultBody: '미래 가격 하락 예상이 해소되어 앞당겨졌던 판매가 정상화되었습니다. 이 정상화 효과와 이번 라운드의 새로운 사건은 함께 시장에 반영됩니다.',
+  },
+  {
+    id: 'rice_typhoon',
+    templateKey: 'recovery_rice_typhoon',
+    sourceEventTitle: '태풍 피해(쌀)',
+    effectType: 'SUPPLY',
+    defaultDirection: '공급 증가',
+    defaultReason: '태풍 피해가 끝나 쌀 공급이 평소 수준으로 회복되었습니다',
+    defaultHeadline: '공급 증가: 태풍 피해가 끝나 쌀 공급이 평소 수준으로 회복되었습니다',
+    defaultBody: '태풍 피해가 끝나 쌀 공급이 평소 수준으로 회복되었습니다. 이 정상화 효과와 이번 라운드의 새로운 사건은 함께 시장에 반영됩니다.',
+  },
+];
+
+export const getRecoveryMessage = (
+  optionId: string | undefined,
+  fallbackTitle: string | undefined,
+  customTemplates?: Record<string, { headline: string; body: string }>
+) => {
+  const templateKey = `recovery_${optionId}`;
+  const custom = customTemplates?.[templateKey];
+  const matched = RECOVERY_TEMPLATE_OPTIONS.find((item) => item.id === optionId);
+  if (custom?.headline?.trim() || custom?.body?.trim()) {
+    const headline = custom.headline?.trim() || matched?.defaultHeadline || '';
+    const body = custom.body?.trim() || matched?.defaultBody || '';
+    const direction = matched?.defaultDirection || (headline.includes(':') ? headline.split(':')[0].trim() : '시장 정상화');
+    const reason = headline.includes(':') ? headline.split(':')[1].trim() : headline;
+    return { direction, reason, headline, body };
+  }
+  if (matched) {
+    return {
+      direction: matched.defaultDirection,
+      reason: matched.defaultReason,
+      headline: matched.defaultHeadline,
+      body: matched.defaultBody,
+    };
+  }
+  const fallbackReason = `지난 라운드의 ‘${fallbackTitle || '일시적 충격'}’ 영향이 사라졌습니다`;
+  return {
+    direction: '시장 정상화',
+    reason: fallbackReason,
+    headline: `시장 정상화: ${fallbackReason}`,
+    body: `${fallbackReason}. 이 정상화 효과와 이번 라운드의 새로운 사건은 함께 시장에 반영됩니다.`,
+  };
+};
+
+export const defaultNewsTemplates = (): Record<string, { headline: string; body: string }> => {
+  const eventTemplates = Object.fromEntries(
+    DEMAND_EVENT_OPTIONS
+      .filter((option) => !['baseline', 'supply_baseline'].includes(option.id))
+      .map((option) => [option.id, {
+        headline: ({
+          income_up: '지갑에 생긴 여유, 유통가 방문과 구매 계획에 온기', income_down: '생활비 부담 커진 가계, 장바구니부터 다시 살핀다',
+          preference_up: '온라인 달군 새 유행, 매장 문의도 빠르게 늘어', preference_down: '번지는 단기 불매 움직임, 구매 직전 발길 돌리는 소비자들',
+          eco_preference: '가격 같다면 친환경 제품…소비자의 선택 기준 달라졌다', substitute_up: '경쟁 상품 가격표 바뀌자 비교 구매 움직임 분주',
+          substitute_down: '경쟁 상품 할인 확산, 소비자 시선 저렴한 대안으로', complement_up: '함께 쓰는 상품 가격 올라 묶음 구매 부담 커져',
+          complement_down: '관련 상품 가격 안정, 함께 구매하려는 발길 늘어', expect_price_up: '“더 오르기 전에 사자”…구매 서두르는 소비자들',
+          expect_price_down: '할인 기대감에 지갑 닫은 소비자, 구매 시기 저울질', consumers_up: '새 소비층 유입에 상권 활기…매장 방문객 증가',
+          consumers_down: '상권 떠나는 소비층…한산해진 매장과 줄어든 문의', material_up: '원재료값 상승에 생산업계 긴장…원가 계산 다시 한다',
+          material_down: '원료 조달비 안정…생산 계획에 여유 생긴 업체들', wage_up: '구인 경쟁에 인건비 상승…생산 현장 비용 부담 확대',
+          wage_down: '인력 확보 여건 개선…업체들 생산 일정 재검토', rent_up: '오른 임대료에 고정비 부담…사업장 운영 전략 고심',
+          rent_down: '임대료 안정에 숨통 트인 업체들, 생산 여력 점검', technology_progress: '새 공정 확산으로 작업시간 단축…생산 현장 효율 개선',
+          suppliers_up: '새 업체 잇단 진입…도매시장 출하 경쟁 치열', suppliers_down: '생산자 이탈에 납품처 감소…유통업계 물량 확보 분주',
+          producer_expect_up: '더 나은 가격 기다리는 생산자들, 출하 대신 보관 선택', producer_expect_down: '가격 약세 전망에 출하 서두르는 생산업계',
+          rice_typhoon: '태풍 지나간 산지, 침수·쓰러짐 피해에 수확량 우려', producer_tax: '생산 단계 새 세금…업체들 단위당 비용 재산정',
+          producer_subsidy: '생산 지원금 지급 시작…미뤘던 생산계획 다시 꺼낸다',
+        } as Record<string, string>)[option.id] || `${option.title}, 시장 참여자 움직임에 변수`,
+        body: [
+          option.effectType === 'SUPPLY' ? '최근 생산과 출하 현장에서 평소와 다른 움직임이 관찰되고 있다.' : '최근 소비 현장에서 평소와 다른 움직임이 관찰되고 있다.',
+          `${signalFor(option, 0)}.`,
+          `${signalFor(option, 1)}.`,
+          option.effectType === 'SUPPLY' ? '업체들은 비용과 생산능력, 시장에 내놓을 물량을 다시 계산하고 있다.' : '유통업계는 방문객 수와 구매 시기, 상품 비교 방식의 변화를 주시하고 있다.',
+          option.effectType === 'SUPPLY' ? '도매시장 관계자들은 실제 출하 물량이 확인될 때까지 상황을 지켜봐야 한다고 전했다.' : '아직 실제 거래 결과가 나오지 않아 소비자의 최종 선택을 단정하기는 이르다.',
+          '시장 참여 기업들은 기사 속 단서를 바탕으로 다음 거래의 가격과 물량 전략을 세워야 할 것으로 보인다.',
+        ].join('\n'),
+      }]),
+  );
+
+  const recoveryTemplates = Object.fromEntries(
+    RECOVERY_TEMPLATE_OPTIONS.map((item) => [item.templateKey, {
+      headline: item.defaultHeadline,
+      body: item.defaultBody,
+    }])
+  );
+
+  return { ...eventTemplates, ...recoveryTemplates };
+};
 
 export const composeEventArticle = (market: Market, option: DemandEventOption, section: 'CONSUMER' | 'PRODUCTION'): NewsArticle => ({
   headline: section === 'CONSUMER'

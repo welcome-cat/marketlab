@@ -790,11 +790,23 @@ export const StudentPage: React.FC = () => {
       {selectedMarket.priceControl === 'FIRM_PRICE' && <small style={{ display: 'block', marginTop: '7px', color: '#64748b' }}>현재 진입 기업 {selectedMarketParticipants}개사 · 가격이 높아질수록 수요가 점진적으로 감소합니다.</small>}
     </section>
 
+    {room.roundPhase === 'SELLING' && !plan && <section style={{ ...card, border: '2px solid #f59e0b', background: '#fffbeb', marginBottom: '16px' }}>
+      <h2 style={{ marginTop: 0, fontSize: '18px' }}>🛒 4개월 판매 진행 중</h2>
+      <p style={{ color: '#b45309', margin: 0, fontWeight: 700, lineHeight: 1.6 }}>현재 4개월(30초) 판매 시간이 진행 중이지만, 이번 라운드 생산 결정을 확정하지 않아 판매에 참여하지 않았습니다. 교사가 다음 라운드를 시작할 때까지 잠시 대기해주세요.</p>
+    </section>}
+
     {room.roundPhase === 'SELLING' && plan && <section ref={sellingPanelRef} className="student-selling-progress" style={{ ...card, border: '2px solid #f59e0b', background: '#fffbeb' }}>
       <h2 style={{ marginTop: 0, fontSize: '18px' }}>🛒 4개월 판매 진행</h2>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '6px', marginBottom: '9px' }}>{[1, 2, 3, 4].map((month) => <div key={month} style={{ padding: '8px 4px', textAlign: 'center', borderRadius: '8px', background: month <= sellingMonth ? '#f59e0b' : '#fde68a', color: month <= sellingMonth ? '#fff' : '#92400e', fontWeight: 800 }}>{month}개월</div>)}</div>
       <progress value={sellingProgress} max={1} style={{ width: '100%' }} />
-      <div style={{ display: 'grid', gap: '7px', marginTop: '10px' }}><span>현재 기간 <b style={{ float: 'right' }}>{sellingMonth}개월 차 / 4개월</b></span><span>적용 중인 희망가격 <b style={{ float: 'right' }}>{currentSalePrice.toLocaleString()}원</b></span><span>현재까지 판매 <b style={{ float: 'right', color: '#2563eb' }}>{liveSoldQuantity}{quantityUnit}</b></span><span>현재 남은 판매대상 <b style={{ float: 'right' }}>{Math.max(0, plannedSaleQuantity - liveSoldQuantity)}{quantityUnit}</b></span></div>
+      <div style={{ display: 'grid', gap: '7px', marginTop: '10px' }}>
+        <span>현재 기간 <b style={{ float: 'right' }}>{sellingMonth}개월 차 / 4개월</b></span>
+        <span>적용 중인 희망가격 <b style={{ float: 'right' }}>{currentSalePrice.toLocaleString()}원</b></span>
+        <span>현재까지 판매 <b style={{ float: 'right', color: '#2563eb' }}>{liveSoldQuantity}{quantityUnit} / {plannedSaleQuantity}{quantityUnit}</b></span>
+        <span>현재까지 누적 판매수입 <b style={{ float: 'right', color: '#16a34a', fontWeight: 800 }}>{(liveSoldQuantity * currentSalePrice).toLocaleString()}원</b></span>
+        <span>판매 소진율 <b style={{ float: 'right' }}>{plannedSaleQuantity > 0 ? Math.min(100, Math.round((liveSoldQuantity / plannedSaleQuantity) * 100)) : 0}%</b></span>
+        <span>현재 남은 판매대상 <b style={{ float: 'right' }}>{Math.max(0, plannedSaleQuantity - liveSoldQuantity)}{quantityUnit}</b></span>
+      </div>
       <div style={{ marginTop: '12px', padding: '12px', borderRadius: '9px', border: '1px solid #fbbf24', background: '#fff' }}>
         <TouchStepper
           label="판매 중 희망가격 조정"

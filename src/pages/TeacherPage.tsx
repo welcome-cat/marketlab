@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { calculateCompetitiveMarket, companyService, productionService, reflectionService, roomService, scaleMarketEventFactor } from '../services';
+import { calculateCompetitiveMarket, calculateMarketClearing, companyService, productionService, reflectionService, roomService, scaleMarketEventFactor } from '../services';
 import type { Company, DemandEvent, EconomicsQuiz, EventIntensity, LearningReflection, MarketRoundResult, ProductionPlan, Room, UnlockRounds } from '../types/domain';
 import { DEFAULT_ECONOMICS_QUIZZES, DEFAULT_REFLECTION_SHEETS, DEFAULT_UNLOCK_ROUNDS, DEMAND_EVENT_OPTIONS, EVENT_INTENSITY_LABEL, EVENT_INTENSITY_SCALE, MARKETS, UPGRADE_OPTIONS } from '../types/domain';
 import { MarketCurveChart } from '../components/MarketCurveChart';
 import { StudentRosterEditor } from '../components/StudentRosterEditor';
 import { ReflectionSettings } from '../components/ReflectionSettings';
-import { composeEventArticle, defaultNewsTemplates } from '../services/newsService';
+import { composeEventArticle, defaultNewsTemplates, getRecoveryMessage, RECOVERY_TEMPLATE_OPTIONS } from '../services/newsService';
 
 const statusLabel = { WAITING: '시작 전', RUNNING: '진행 중', FINISHED: '종료' } as const;
 type MarketInfluenceDraft = Record<string, { studentSupplyWeight: number; demandEventEffectScale: number; supplyEventEffectScale: number }>;
@@ -65,6 +65,7 @@ export const TeacherPage: React.FC = () => {
   const [showForecast, setShowForecast] = useState(false);
   const [showCreateRoom, setShowCreateRoom] = useState(false);
   const [showNewsTemplates, setShowNewsTemplates] = useState(false);
+  const [newsTemplateTab, setNewsTemplateTab] = useState<'EVENTS' | 'RECOVERY'>('EVENTS');
   const [showReflectionSettings, setShowReflectionSettings] = useState(false);
   const [newsTemplateDraft, setNewsTemplateDraft] = useState<Record<string, { headline: string; body: string }>>(DEFAULT_NEWS_TEMPLATES);
   const [marketInfluenceDraft, setMarketInfluenceDraft] = useState<MarketInfluenceDraft>(() => influenceFromMarkets(MARKETS));
@@ -400,6 +401,63 @@ export const TeacherPage: React.FC = () => {
   }) || [];
   const card = { background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '22px', boxShadow: '0 2px 5px rgba(0,0,0,.03)' } as const;
   const sellingSecondsLeft = Math.max(0, Math.ceil(((activeRoom?.sellingEndsAt || 0) - clock) / 1000));
+  const sellingProgress = activeRoom?.roundPhase === 'SELLING' ? Math.max(0, Math.min(1, (clock - (activeRoom.sellingStartedAt || clock)) / 30000)) : (activeRoom?.roundPhase === 'RESULT' ? 1 : 0);
+  const sellingMonth = Math.min(4, Math.max(1, Math.ceil(sellingProgress * 4)));
+
+  const liveClearingMap = React.useMemo(() => {
+    if (!activeRoom) return new Map();
+    const map = new Map();
+    for (const market of activeRoom.markets) {
+      const marketPlans = roundPlans.filter((p) => p.productId === market.id);
+      const activeEvent = activeRoom.demandEvents.find((e) => e.marketId === market.id);
+      const demandMultiplier = activeEvent?.effectType === 'SUPPLY' ? 1 : scaleMarketEventFactor(activeEvent?.multiplier, EVENT_INTENSITY_SCALE[activeEvent?.demandIntensity || 'MEDIUM']);
+      const clearing = calculateMarketClearing(market, marketPlans, demandMultiplier, activeEvent?.ecoPreferenceBoost || 0);
+      map.set(market.id, clearing);
+    }
+    return map;
+  }, [activeRoom, roundPlans]);
+
+  const companyLiveSales = React.useMemo(() => {
+    if (!activeRoom) return [];
+    return companies.map((company) => {
+      const plan = roundPlans.find((p) => p.companyId === company.id);
+      if (!plan) {
+        return {
+          company,
+          plan: null,
+          market: null,
+          askingPrice: 0,
+          plannedQuantity: 0,
+          liveSoldQuantity: 0,
+          liveRevenue: 0,
+          progressRate: 0,
+          status: '미제출',
+        };
+      }
+      const market = activeRoom.markets.find((m) => m.id === plan.productId);
+      const clearing = liveClearingMap.get(plan.productId);
+      const projectedSold = clearing?.soldByPlan.get(plan.id) || 0;
+      const plannedQuantity = plan.offeredQuantity ?? plan.producedQuantity;
+      const askingPrice = plan.askingPrice || plan.announcedPrice || market?.announcedPrice || 0;
+      const refPrice = market?.announcedPrice || askingPrice;
+      const priceGapRate = (refPrice - askingPrice) / Math.max(1, refPrice);
+      const salesPace = priceGapRate >= 0 ? 1 + Math.min(0.8, priceGapRate * 2) : Math.max(0.25, 1 + priceGapRate * 2);
+      const liveSold = Math.min(projectedSold, Math.floor(projectedSold * Math.min(1, sellingProgress * salesPace)));
+      const liveRev = liveSold * askingPrice;
+      const progressRate = plannedQuantity > 0 ? Math.min(100, Math.round((liveSold / plannedQuantity) * 100)) : 0;
+      return {
+        company,
+        plan,
+        market,
+        askingPrice,
+        plannedQuantity,
+        liveSoldQuantity: liveSold,
+        liveRevenue: liveRev,
+        progressRate,
+        status: progressRate >= 100 ? '완판' : liveSold > 0 ? '판매 중' : '대기',
+      };
+    });
+  }, [activeRoom, companies, roundPlans, liveClearingMap, sellingProgress]);
 
   if (!teacherAuthenticated) return <div className="teacher-login"><form onSubmit={(event) => { event.preventDefault(); if (teacherPassword !== '13579246') return alert('비밀번호가 올바르지 않습니다.'); sessionStorage.setItem('marketlab:teacher-auth', '1'); setTeacherAuthenticated(true); }}><h1>👨‍🏫 교사용 대시보드</h1><p>교사 비밀번호를 입력해주세요.</p><input autoFocus aria-label="교사 비밀번호" type="password" value={teacherPassword} onChange={(event) => setTeacherPassword(event.target.value)} /><button type="submit">로그인</button><button type="button" onClick={() => navigate('/')}>돌아가기</button></form></div>;
 
@@ -433,6 +491,91 @@ export const TeacherPage: React.FC = () => {
             </div>
           </div>
         </section>
+
+        {activeRoom.roundPhase === 'SELLING' && <section className="teacher-live-sales-dashboard" style={{ ...card, border: '2px solid #7c3aed', background: '#faf5ff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <div>
+              <span style={{ fontSize: '12px', fontWeight: 800, color: '#7c3aed' }}>LIVE SALES DASHBOARD</span>
+              <h3 style={{ margin: '3px 0', fontSize: '20px', color: '#581c87' }}>🛒 Round {activeRoom.currentRound} 실시간 4개월 판매 현황</h3>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ padding: '6px 12px', borderRadius: '8px', background: '#7c3aed', color: '#fff', fontSize: '14px', fontWeight: 800 }}>
+                ⏱️ 판매 중: {sellingSecondsLeft > 0 ? `${sellingSecondsLeft}초 남음` : '마감됨'}
+              </span>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '8px', margin: '14px 0 10px' }}>
+            {[1, 2, 3, 4].map((month) => (
+              <div key={month} style={{ padding: '10px 6px', textAlign: 'center', borderRadius: '10px', background: month <= sellingMonth ? '#7c3aed' : '#e9d5ff', color: month <= sellingMonth ? '#fff' : '#6b21a8', fontWeight: 800, fontSize: '14px', transition: 'all 0.3s' }}>
+                {month}개월 차 {month === sellingMonth && '🔥'}
+              </div>
+            ))}
+          </div>
+          <progress value={sellingProgress} max={1} style={{ width: '100%', height: '10px', borderRadius: '5px' }} />
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: '10px', marginTop: '16px' }}>
+            {activeRoom.markets.map((market) => {
+              const marketSales = companyLiveSales.filter((item) => item.market?.id === market.id);
+              const totalSold = marketSales.reduce((sum, item) => sum + item.liveSoldQuantity, 0);
+              const totalPlanned = marketSales.reduce((sum, item) => sum + item.plannedQuantity, 0);
+              const totalRev = marketSales.reduce((sum, item) => sum + item.liveRevenue, 0);
+              return (
+                <div key={market.id} style={{ background: '#fff', border: '1px solid #d8b4fe', borderRadius: '12px', padding: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong>{market.icon} {market.name}</strong>
+                    <span style={{ fontSize: '12px', color: '#6b21a8', fontWeight: 700 }}>{marketSales.length}개사</span>
+                  </div>
+                  <div style={{ marginTop: '8px', fontSize: '13px', display: 'grid', gap: '4px' }}>
+                    <span>실시간 판매량: <b style={{ float: 'right', color: '#7c3aed' }}>{totalSold.toLocaleString()} / {totalPlanned.toLocaleString()}</b></span>
+                    <span>실시간 판매수입: <b style={{ float: 'right', color: '#16a34a' }}>{totalRev.toLocaleString()}원</b></span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ overflowX: 'auto', marginTop: '16px', background: '#fff', borderRadius: '12px', border: '1px solid #d8b4fe', padding: '14px' }}>
+            <h4 style={{ margin: '0 0 10px', fontSize: '15px' }}>🏢 학생 기업별 실시간 판매 추이</h4>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'center', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ background: '#f5f3ff', color: '#581c87', borderBottom: '1px solid #e9d5ff' }}>
+                  <th style={{ padding: '8px' }}>기업</th>
+                  <th>선택 시장</th>
+                  <th>희망가격</th>
+                  <th>판매대상</th>
+                  <th>실시간 판매량</th>
+                  <th>실시간 판매수입</th>
+                  <th>소진율</th>
+                  <th>상태</th>
+                </tr>
+              </thead>
+              <tbody>
+                {companyLiveSales.map(({ company, market, askingPrice, plannedQuantity, liveSoldQuantity, liveRevenue, progressRate, status }) => (
+                  <tr key={company.id} style={{ borderBottom: '1px solid #f3e8ff' }}>
+                    <td style={{ padding: '9px', fontWeight: 700 }}>{company.name}</td>
+                    <td>{market ? `${market.icon} ${market.name}` : '-'}</td>
+                    <td>{askingPrice ? `${askingPrice.toLocaleString()}원` : '-'}</td>
+                    <td>{plannedQuantity.toLocaleString()}</td>
+                    <td style={{ color: '#7c3aed', fontWeight: 800 }}>{liveSoldQuantity.toLocaleString()}</td>
+                    <td style={{ color: '#16a34a', fontWeight: 800 }}>{liveRevenue.toLocaleString()}원</td>
+                    <td style={{ minWidth: '100px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>
+                        <progress value={progressRate} max={100} style={{ width: '60px', height: '8px' }} />
+                        <span style={{ fontSize: '11px', fontWeight: 700 }}>{progressRate}%</span>
+                      </div>
+                    </td>
+                    <td>
+                      <span style={{ padding: '3px 8px', borderRadius: '999px', fontSize: '11px', fontWeight: 800, background: status === '완판' ? '#dcfce7' : status === '판매 중' ? '#fef3c7' : '#f1f5f9', color: status === '완판' ? '#166534' : status === '판매 중' ? '#92400e' : '#475569' }}>
+                        {status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>}
 
         <section className="teacher-quizzes" style={{ ...card, border: '2px solid #16a34a', background: '#f0fdf4' }}>
           <div>
@@ -495,11 +638,35 @@ export const TeacherPage: React.FC = () => {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))', gap: '12px', marginTop: '14px' }}>{activeRoom.markets.map((market) => {
             const selectedOption = DEMAND_EVENT_OPTIONS.find((option) => option.id === (demandSelections[market.id] || 'baseline')) || DEMAND_EVENT_OPTIONS.find((option) => option.id === 'baseline')!;
             const selectedSupplyOption = DEMAND_EVENT_OPTIONS.find((option) => option.id === (supplySelections[market.id] || 'supply_baseline')) || DEMAND_EVENT_OPTIONS.find((option) => option.id === 'supply_baseline')!;
-            const defaultArticle = composeEventArticle(market, selectedOption, 'CONSUMER');
+
+            // 지난 라운드의 단기 충격 해소 여부 확인
+            const prevEvent = activeRoom.demandEvents.find((item) => item.marketId === market.id);
+            const prevDemandTemp = Boolean(DEMAND_EVENT_OPTIONS.find((o) => o.id === prevEvent?.optionId)?.temporary);
+            const prevSupplyTemp = Boolean(DEMAND_EVENT_OPTIONS.find((o) => o.id === prevEvent?.supplyOptionId)?.temporary);
+            const recoveryItems: Array<{ direction: string; reason: string; headline: string; body: string }> = [];
+            if (prevDemandTemp) recoveryItems.push(getRecoveryMessage(prevEvent?.optionId, prevEvent?.title, activeRoom.newsTemplates || newsTemplateDraft));
+            if (prevSupplyTemp) recoveryItems.push(getRecoveryMessage(prevEvent?.supplyOptionId, prevEvent?.supplyTitle, activeRoom.newsTemplates || newsTemplateDraft));
+            const hasRecovery = recoveryItems.length > 0;
+            const recoverySummary = recoveryItems.map((r) => `${r.direction}: ${r.reason}`).join(' · ');
+            const recoveryBodyPrefix = recoveryItems.map((r) => r.body).join(' ');
+
+            const baseConsumerArticle = composeEventArticle(market, selectedOption, 'CONSUMER');
+            const defaultArticle = hasRecovery ? {
+              ...baseConsumerArticle,
+              headline: `${recoverySummary} — ${baseConsumerArticle.headline}`,
+              body: `${recoveryBodyPrefix} ${baseConsumerArticle.body}`,
+            } : baseConsumerArticle;
+
             const defaultSupplyArticle = composeEventArticle(market, selectedSupplyOption, 'PRODUCTION');
             const supplyOptions = DEMAND_EVENT_OPTIONS.filter((option) => option.effectType === 'SUPPLY' && (option.id !== 'rice_typhoon' || market.id === 'market_toy'));
-            return <article key={market.id} style={{ background: '#fff', padding: '13px', borderRadius: '10px', border: '1px solid #fcd34d' }}>
-              <strong>{market.icon} {market.name}</strong>
+            return <article key={market.id} style={{ background: '#fff', padding: '13px', borderRadius: '10px', border: hasRecovery ? '2px solid #f59e0b' : '1px solid #fcd34d' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong>{market.icon} {market.name}</strong>
+                {hasRecovery && <span style={{ fontSize: '11px', fontWeight: 800, padding: '2px 7px', borderRadius: '999px', background: '#fef3c7', color: '#b45309' }}>🔄 정상화 예정</span>}
+              </div>
+              {hasRecovery && <div style={{ margin: '6px 0', padding: '6px 8px', borderRadius: '6px', background: '#fffbeb', border: '1px solid #fde68a', fontSize: '12px', color: '#92400e', lineHeight: 1.4 }}>
+                <strong>단기 충격 해소:</strong> {recoverySummary}
+              </div>}
               <div className="event-effect-labels"><span>{eventDirectionLabel(selectedOption, '수요')}: {selectedOption.title}</span><span>{eventDirectionLabel(selectedSupplyOption, '공급')}: {selectedSupplyOption.title}</span></div>
               <label style={{ display: 'block', marginTop: '8px', fontSize: '12px' }}>수요변동<select value={demandSelections[market.id] || 'baseline'} onChange={(event) => setDemandSelections((current) => ({ ...current, [market.id]: event.target.value }))} style={{ width: '100%', marginTop: '4px', padding: '9px' }}>{DEMAND_EVENT_OPTIONS.filter((option) => option.effectType !== 'SUPPLY').map((option) => <option key={option.id} value={option.id}>{eventOptionLabel(option, '수요')}</option>)}</select></label>
               {selectedOption.factor !== 'BASELINE' && <label style={{ display: 'block', marginTop: '8px', fontSize: '12px' }}>수요 효과 강도<select aria-label={`${market.name} 수요 효과 강도`} value={demandIntensities[market.id] || 'MEDIUM'} onChange={(event) => setDemandIntensities((current) => ({ ...current, [market.id]: event.target.value as EventIntensity }))} style={{ width: '100%', marginTop: '4px', padding: '9px' }}>{Object.entries(EVENT_INTENSITY_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
@@ -511,7 +678,7 @@ export const TeacherPage: React.FC = () => {
               {selectedSupplyOption.id === 'producer_tax' && <label style={{ display: 'block', marginTop: '8px' }}>단위당 세금<input type="number" min="0" value={taxDraft[market.id] || 0} onChange={(event) => setTaxDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label>}
               {selectedSupplyOption.id === 'producer_subsidy' && <label style={{ display: 'block', marginTop: '8px' }}>단위당 보조금<input type="number" min="0" value={subsidyDraft[market.id] || 0} onChange={(event) => setSubsidyDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label>}
               {selectedSupplyOption.id === 'rice_typhoon' && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginTop: '8px' }}><label>피해 확률(%)<input type="number" min="0" max="100" value={disasterChanceDraft[market.id] || 40} onChange={(event) => setDisasterChanceDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label><label>피해율(%)<input type="number" min="0" max="100" value={disasterLossDraft[market.id] || 30} onChange={(event) => setDisasterLossDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label></div>}
-              <details className="news-editor"><summary>✏️ 소비자·생산 원고 확인·직접 편집</summary><p style={{ color: '#64748b', fontSize: '12px' }}>수요 사건은 소비자 리포트에, 공급 사건은 생산 동향에 각각 실립니다.</p><h4>🛒 소비자 리포트</h4><label>기사 제목<input value={newsEdits[market.id]?.headline ?? defaultArticle.headline} onChange={(event) => setNewsEdits((current) => ({ ...current, [market.id]: { ...current[market.id], headline: event.target.value } }))} /></label><label>기사 내용<textarea rows={7} value={newsEdits[market.id]?.body ?? defaultArticle.body} onChange={(event) => setNewsEdits((current) => ({ ...current, [market.id]: { ...current[market.id], body: event.target.value } }))} /></label><h4>🏭 생산 동향</h4><label>기사 제목<input value={newsEdits[market.id]?.supplyHeadline ?? defaultSupplyArticle.headline} onChange={(event) => setNewsEdits((current) => ({ ...current, [market.id]: { ...current[market.id], supplyHeadline: event.target.value } }))} /></label><label>기사 내용<textarea rows={7} value={newsEdits[market.id]?.supplyBody ?? defaultSupplyArticle.body} onChange={(event) => setNewsEdits((current) => ({ ...current, [market.id]: { ...current[market.id], supplyBody: event.target.value } }))} /></label></details>
+              <details className="news-editor"><summary>✏️ 소비자·생산 원고 확인·직접 편집</summary><p style={{ color: '#64748b', fontSize: '12px' }}>수요 사건은 소비자 리포트에, 공급 사건은 생산 동향에 각각 실립니다.{hasRecovery ? ' (지난 라운드 단기 충격 정상화 문구가 포함되어 있습니다.)' : ''}</p><h4>🛒 소비자 리포트</h4><label>기사 제목<input value={newsEdits[market.id]?.headline ?? defaultArticle.headline} onChange={(event) => setNewsEdits((current) => ({ ...current, [market.id]: { ...current[market.id], headline: event.target.value } }))} /></label><label>기사 내용<textarea rows={7} value={newsEdits[market.id]?.body ?? defaultArticle.body} onChange={(event) => setNewsEdits((current) => ({ ...current, [market.id]: { ...current[market.id], body: event.target.value } }))} /></label><h4>🏭 생산 동향</h4><label>기사 제목<input value={newsEdits[market.id]?.supplyHeadline ?? defaultSupplyArticle.headline} onChange={(event) => setNewsEdits((current) => ({ ...current, [market.id]: { ...current[market.id], supplyHeadline: event.target.value } }))} /></label><label>기사 내용<textarea rows={7} value={newsEdits[market.id]?.supplyBody ?? defaultSupplyArticle.body} onChange={(event) => setNewsEdits((current) => ({ ...current, [market.id]: { ...current[market.id], supplyBody: event.target.value } }))} /></label></details>
             </article>;
           })}</div>
           {newsMessage && <p role="status" style={{ padding: '10px 12px', margin: '12px 0 0', borderRadius: '8px', background: newsMessage.includes('발행되었습니다') ? '#dcfce7' : '#fee2e2', color: newsMessage.includes('발행되었습니다') ? '#166534' : '#991b1b', fontWeight: 700 }}>{newsMessage}</p>}
@@ -520,7 +687,19 @@ export const TeacherPage: React.FC = () => {
 
         {showForecast && <div className="teacher-nested-modal" role="dialog" aria-modal="true" aria-labelledby="market-forecast-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowForecast(false); }}><section className="teacher-forecast-modal" style={{ ...card, border: '2px solid #d97706' }}><div className="teacher-modal-heading"><h3 id="market-forecast-title" style={{ margin: 0 }}>🔍 선택 사건 적용 결과 예측</h3><button type="button" onClick={() => setShowForecast(false)} aria-label="예측 확인 닫기">✕</button></div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: '9px' }}>{eventForecasts.map(({ market, option, supplyOption, price, demand, materialCost, wage, productivity }) => <article key={market.id} style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '9px', padding: '12px' }}><strong>{market.icon} {market.name}</strong><small style={{ display: 'block', color: '#9a3412', margin: '4px 0 7px' }}>수요: {option.title} ({EVENT_INTENSITY_LABEL[demandIntensities[market.id] || 'MEDIUM']})<br />공급: {supplyOption.title} ({EVENT_INTENSITY_LABEL[supplyIntensities[market.id] || 'MEDIUM']})</small><span style={{ display: 'block' }}>시장가격 <b style={{ float: 'right' }}>{market.announcedPrice.toLocaleString()}원 → {price.toLocaleString()}원</b></span><span style={{ display: 'block' }}>기준수요 <b style={{ float: 'right' }}>{market.demandAtBasePrice.toLocaleString()} → {demand.toLocaleString()}</b></span><span style={{ display: 'block' }}>단위 재료비 <b style={{ float: 'right' }}>{materialCost.toLocaleString()}원</b></span><span style={{ display: 'block' }}>1명당 임금 <b style={{ float: 'right' }}>{wage.toLocaleString()}원</b></span><span style={{ display: 'block' }}>첫 노동자 생산성 <b style={{ float: 'right' }}>{productivity}</b></span></article>)}</div></section></div>}
 
-        {showNewsTemplates && <div className="teacher-nested-modal" role="dialog" aria-modal="true" aria-labelledby="news-template-title"><section className="teacher-news-templates" style={{ ...card, border: '2px solid #d97706' }}><div className="teacher-modal-heading"><h3 id="news-template-title" style={{ margin: 0 }}>🗂 상황별 신문기사 편집</h3><button type="button" onClick={() => setShowNewsTemplates(false)} aria-label="상황별 신문기사 닫기">✕</button></div><p style={{ color: '#64748b', fontSize: '13px' }}>각 사건에 사용할 신문식 기본 원고입니다. 수정해 저장하면 이후 기사 발행 시 수정본을 우선 사용합니다.</p><div style={{ display: 'grid', gap: '10px' }}>{DEMAND_EVENT_OPTIONS.filter((option) => !['baseline', 'supply_baseline'].includes(option.id)).map((option) => { const draft = newsTemplateDraft[option.id] || DEFAULT_NEWS_TEMPLATES[option.id]; return <details key={option.id} className="news-editor"><summary>{option.effectType === 'SUPPLY' ? '공급' : '수요'} · {option.title}{option.temporary ? ' (일시 충격)' : ''}</summary><label>제목<input value={draft.headline} onChange={(event) => setNewsTemplateDraft((current) => ({ ...current, [option.id]: { ...draft, headline: event.target.value } }))} /></label><label>내용<textarea rows={9} value={draft.body} onChange={(event) => setNewsTemplateDraft((current) => ({ ...current, [option.id]: { ...draft, body: event.target.value } }))} /></label></details>; })}</div><button onClick={async () => { if (!activeRoom) return; const templates = { ...DEFAULT_NEWS_TEMPLATES, ...newsTemplateDraft }; await roomService.updateNewsTemplates(activeRoom.id, templates); setNewsTemplateDraft(templates); alert('상황별 신문기사를 저장했습니다.'); }} style={{ marginTop: '12px' }}>상황별 기사 저장</button></section></div>}
+        {showNewsTemplates && <div className="teacher-nested-modal" role="dialog" aria-modal="true" aria-labelledby="news-template-title"><section className="teacher-news-templates" style={{ ...card, border: '2px solid #d97706', maxWidth: '800px', maxHeight: '85vh', overflowY: 'auto' }}><div className="teacher-modal-heading"><h3 id="news-template-title" style={{ margin: 0 }}>🗂 상황별 신문기사 편집</h3><button type="button" onClick={() => setShowNewsTemplates(false)} aria-label="상황별 신문기사 닫기">✕</button></div>
+          <div style={{ display: 'flex', gap: '8px', margin: '12px 0' }}>
+            <button type="button" onClick={() => setNewsTemplateTab('EVENTS')} style={{ padding: '8px 14px', borderRadius: '8px', border: 0, background: newsTemplateTab === 'EVENTS' ? '#d97706' : '#f1f5f9', color: newsTemplateTab === 'EVENTS' ? '#fff' : '#334155', fontWeight: 800 }}>📰 사건별 기본 원고 (25종)</button>
+            <button type="button" onClick={() => setNewsTemplateTab('RECOVERY')} style={{ padding: '8px 14px', borderRadius: '8px', border: 0, background: newsTemplateTab === 'RECOVERY' ? '#d97706' : '#f1f5f9', color: newsTemplateTab === 'RECOVERY' ? '#fff' : '#334155', fontWeight: 800 }}>🔄 단기 충격 정상화·회복 원고 (9종)</button>
+          </div>
+          {newsTemplateTab === 'EVENTS' ? <>
+            <p style={{ color: '#64748b', fontSize: '13px', margin: '0 0 10px' }}>각 사건에 사용할 신문식 기본 원고입니다. 수정해 저장하면 이후 기사 발행 시 수정본을 우선 사용합니다.</p>
+            <div style={{ display: 'grid', gap: '10px' }}>{DEMAND_EVENT_OPTIONS.filter((option) => !['baseline', 'supply_baseline'].includes(option.id)).map((option) => { const draft = newsTemplateDraft[option.id] || DEFAULT_NEWS_TEMPLATES[option.id]; return <details key={option.id} className="news-editor"><summary>{option.effectType === 'SUPPLY' ? '공급' : '수요'} · {option.title}{option.temporary ? ' (일시 충격)' : ''}</summary><label>제목<input value={draft.headline} onChange={(event) => setNewsTemplateDraft((current) => ({ ...current, [option.id]: { ...draft, headline: event.target.value } }))} /></label><label>내용<textarea rows={7} value={draft.body} onChange={(event) => setNewsTemplateDraft((current) => ({ ...current, [option.id]: { ...draft, body: event.target.value } }))} /></label></details>; })}</div>
+          </> : <>
+            <p style={{ color: '#64748b', fontSize: '13px', margin: '0 0 10px' }}>단기 충격(일시적 유행, 소득 변화, 가격 예상 등)이 끝난 다음 라운드에 시장이 정상 수준으로 복귀할 때 신문 머리말과 본문에 합성되는 정상화 안내문입니다. 수정해 저장하면 이후 기사 발행 시 수정본을 우선 사용합니다.</p>
+            <div style={{ display: 'grid', gap: '10px' }}>{RECOVERY_TEMPLATE_OPTIONS.map((item) => { const draft = newsTemplateDraft[item.templateKey] || DEFAULT_NEWS_TEMPLATES[item.templateKey]; return <details key={item.templateKey} className="news-editor"><summary>{item.effectType === 'SUPPLY' ? '공급' : '수요'} · {item.sourceEventTitle} 종료 후 정상화 ({item.defaultDirection})</summary><label>기사 머리말(요약)<input value={draft.headline} onChange={(event) => setNewsTemplateDraft((current) => ({ ...current, [item.templateKey]: { ...draft, headline: event.target.value } }))} /></label><label>기사 본문(상세)<textarea rows={5} value={draft.body} onChange={(event) => setNewsTemplateDraft((current) => ({ ...current, [item.templateKey]: { ...draft, body: event.target.value } }))} /></label></details>; })}</div>
+          </>}
+          <button onClick={async () => { if (!activeRoom) return; const templates = { ...DEFAULT_NEWS_TEMPLATES, ...newsTemplateDraft }; await roomService.updateNewsTemplates(activeRoom.id, templates); setNewsTemplateDraft(templates); alert('상황별 신문기사를 저장했습니다.'); }} style={{ marginTop: '14px', background: '#d97706', color: '#fff', border: 0, borderRadius: '8px', padding: '11px 16px', fontWeight: 800 }}>상황별 기사 저장</button></section></div>}
 
         <section className="teacher-markets" style={card}><h3 style={{ marginTop: 0 }}>📊 동시에 개설된 시장과 공개가격</h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: '12px' }}>{marketStats.map((market) =>
@@ -533,7 +712,67 @@ export const TeacherPage: React.FC = () => {
 
         <section className="teacher-curves" style={card}><h3 style={{ marginTop: 0 }}>📉 전체 시장 수요·공급곡선</h3><p style={{ color: '#64748b', fontSize: '13px' }}>가격수용 시장의 전체 수요곡선과 전체 공급곡선만 표시합니다. 스마트폰 과점시장에는 하나의 공급곡선을 적용하지 않습니다.</p><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: '18px' }}>{activeRoom.markets.filter((market) => market.marketType === 'PERFECT_COMPETITION').map((market) => { const event = activeRoom.demandEvents.find((item) => item.marketId === market.id); const demandMultiplier = scaleMarketEventFactor(event?.multiplier, EVENT_INTENSITY_SCALE[event?.demandIntensity || 'MEDIUM']); return <MarketCurveChart key={market.id} market={market} plans={[]} demandMultiplier={demandMultiplier} />; })}</div></section>
 
-        <section className={`teacher-company-comparison ${activeRoom.roundPhase === 'RESULT' ? 'is-settled' : ''}`} style={{ ...card, gridColumn: '1 / -1' }}><h3 style={{ marginTop: 0 }}>📋 Round {activeRoom.currentRound} 학생 기업 비교 현황판 ({roundPlans.length}/{companies.length} 확정)</h3><p style={{ color: '#64748b', fontSize: '13px' }}>{activeRoom.roundPhase === 'RESULT' ? '라운드가 마감되어 실제 판매량·매출·이윤을 비교합니다.' : '현재 제출된 생산계획의 확정 고용·설비·비용과 전량 판매 가정 예상치를 비교합니다.'}</p><div style={{ overflowX: 'auto' }}><table><thead><tr><th>기업</th><th>생산확정</th><th>시장</th><th>퀴즈</th><th>확정 고용</th><th>확정 기계</th><th>생산/판매희망</th><th>한계생산</th><th>평균비용</th><th>한계비용</th><th>{activeRoom.roundPhase === 'RESULT' ? '실제 판매' : '예상 매출'}</th><th>{activeRoom.roundPhase === 'RESULT' ? '실제 이윤' : '예상 이윤'}</th><th>현금</th><th>관리</th></tr></thead><tbody>{companies.map((company) => { const companyPlan = roundPlans.find((item) => item.companyId === company.id); const averageCost = companyPlan ? Math.round((companyPlan.productionCost + (companyPlan.allocatedInvestmentCost || 0)) / Math.max(1, companyPlan.producedQuantity)) : null; const expectedRevenue = companyPlan ? (companyPlan.offeredQuantity ?? companyPlan.producedQuantity) * (companyPlan.askingPrice || companyPlan.announcedPrice) : 0; const expectedProfit = companyPlan ? expectedRevenue - companyPlan.productionCost - (companyPlan.allocatedInvestmentCost || 0) : 0; const settled = companyPlan?.settlementStatus === 'SETTLED'; const isSubmitted = Boolean(companyPlan); return <tr key={company.id}><td><strong>{company.name}</strong></td><td><span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '999px', fontSize: '11px', fontWeight: 800, background: isSubmitted ? '#dcfce7' : '#fee2e2', color: isSubmitted ? '#166534' : '#991b1b' }}>{isSubmitted ? '확정' : '미확정'}</span></td><td>{companyPlan?.marketName || '-'}</td><td>{company.quizCompletedRounds?.includes(activeRoom.currentRound) ? '완료' : '미완료'}</td><td>{companyPlan ? `${companyPlan.workerCount}명` : '-'}</td><td>{companyPlan ? `${companyPlan.machineCountAfter}대` : '-'}</td><td>{companyPlan ? `${companyPlan.producedQuantity.toLocaleString()}/${(companyPlan.offeredQuantity ?? companyPlan.producedQuantity).toLocaleString()}` : '-'}</td><td>{companyPlan ? `${companyPlan.marginalProduct.toFixed(2)}` : '-'}</td><td>{averageCost === null ? '-' : `${averageCost.toLocaleString()}원`}</td><td>{companyPlan?.marginalCost == null ? '-' : `${companyPlan.marginalCost.toLocaleString()}원`}</td><td>{companyPlan ? settled ? `${(companyPlan.soldQuantity || 0).toLocaleString()}` : `${expectedRevenue.toLocaleString()}원` : '-'}</td><td className={(settled ? (companyPlan?.economicProfit || 0) : expectedProfit) >= 0 ? 'positive' : 'negative'}>{companyPlan ? `${(settled ? companyPlan.economicProfit || 0 : expectedProfit).toLocaleString()}원` : '-'}</td><td>{company.cash.toLocaleString()}원</td><td style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}><button onClick={() => setSelectedCompanyId(company.id)}>상세</button><button disabled={companyActionId === company.id} onClick={() => handleRenameCompany(company)} title="팀명 수정">수정</button><button disabled={companyActionId === company.id} onClick={() => handleDeleteCompany(company)} style={{ color: '#dc2626' }} title="기업 삭제">삭제</button></td></tr>; })}</tbody></table></div></section>
+        <section className={`teacher-company-comparison ${activeRoom.roundPhase === 'RESULT' ? 'is-settled' : ''}`} style={{ ...card, gridColumn: '1 / -1' }}>
+          <h3 style={{ marginTop: 0 }}>📋 Round {activeRoom.currentRound} 학생 기업 비교 현황판 ({roundPlans.length}/{companies.length} 확정)</h3>
+          <p style={{ color: '#64748b', fontSize: '13px' }}>{activeRoom.roundPhase === 'RESULT' ? '라운드가 마감되어 실제 판매량·매출·이윤을 비교합니다.' : activeRoom.roundPhase === 'SELLING' ? '30초(4개월) 판매가 진행 중이며 실시간 판매량과 수입이 갱신됩니다.' : '현재 제출된 생산계획의 확정 고용·설비·비용과 전량 판매 가정 예상치를 비교합니다.'}</p>
+          <div style={{ overflowX: 'auto' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>기업</th>
+                  <th>생산확정</th>
+                  <th>시장</th>
+                  <th>퀴즈</th>
+                  <th>확정 고용</th>
+                  <th>확정 기계</th>
+                  <th>생산/판매희망</th>
+                  <th>한계생산</th>
+                  <th>평균비용</th>
+                  <th>한계비용</th>
+                  <th>{activeRoom.roundPhase === 'RESULT' ? '실제 판매' : activeRoom.roundPhase === 'SELLING' ? '실시간 판매' : '예상 판매'}</th>
+                  <th>{activeRoom.roundPhase === 'RESULT' ? '실제 이윤' : activeRoom.roundPhase === 'SELLING' ? '실시간 수입' : '예상 이윤'}</th>
+                  <th>현금</th>
+                  <th>관리</th>
+                </tr>
+              </thead>
+              <tbody>
+                {companies.map((company) => {
+                  const companyPlan = roundPlans.find((item) => item.companyId === company.id);
+                  const averageCost = companyPlan ? Math.round((companyPlan.productionCost + (companyPlan.allocatedInvestmentCost || 0)) / Math.max(1, companyPlan.producedQuantity)) : null;
+                  const expectedRevenue = companyPlan ? (companyPlan.offeredQuantity ?? companyPlan.producedQuantity) * (companyPlan.askingPrice || companyPlan.announcedPrice) : 0;
+                  const expectedProfit = companyPlan ? expectedRevenue - companyPlan.productionCost - (companyPlan.allocatedInvestmentCost || 0) : 0;
+                  const settled = companyPlan?.settlementStatus === 'SETTLED';
+                  const isSubmitted = Boolean(companyPlan);
+                  const liveSales = companyLiveSales.find((item) => item.company.id === company.id);
+                  return (
+                    <tr key={company.id}>
+                      <td><strong>{company.name}</strong></td>
+                      <td><span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '999px', fontSize: '11px', fontWeight: 800, background: isSubmitted ? '#dcfce7' : '#fee2e2', color: isSubmitted ? '#166534' : '#991b1b' }}>{isSubmitted ? '확정' : '미확정'}</span></td>
+                      <td>{companyPlan?.marketName || '-'}</td>
+                      <td>{company.quizCompletedRounds?.includes(activeRoom.currentRound) ? '완료' : '미완료'}</td>
+                      <td>{companyPlan ? `${companyPlan.workerCount}명` : '-'}</td>
+                      <td>{companyPlan ? `${companyPlan.machineCountAfter}대` : '-'}</td>
+                      <td>{companyPlan ? `${companyPlan.producedQuantity.toLocaleString()}/${(companyPlan.offeredQuantity ?? companyPlan.producedQuantity).toLocaleString()}` : '-'}</td>
+                      <td>{companyPlan ? `${companyPlan.marginalProduct.toFixed(2)}` : '-'}</td>
+                      <td>{averageCost === null ? '-' : `${averageCost.toLocaleString()}원`}</td>
+                      <td>{companyPlan?.marginalCost == null ? '-' : `${companyPlan.marginalCost.toLocaleString()}원`}</td>
+                      <td>{companyPlan ? settled ? `${(companyPlan.soldQuantity || 0).toLocaleString()}개` : activeRoom.roundPhase === 'SELLING' ? <b style={{ color: '#7c3aed' }}>{liveSales?.liveSoldQuantity.toLocaleString()}개</b> : `${(companyPlan.offeredQuantity ?? companyPlan.producedQuantity).toLocaleString()}개` : '-'}</td>
+                      <td className={(settled ? (companyPlan?.economicProfit || 0) : expectedProfit) >= 0 ? 'positive' : 'negative'}>
+                        {companyPlan ? settled ? `${(companyPlan.economicProfit || 0).toLocaleString()}원` : activeRoom.roundPhase === 'SELLING' ? <b style={{ color: '#16a34a' }}>{liveSales?.liveRevenue.toLocaleString()}원</b> : `${expectedProfit.toLocaleString()}원` : '-'}
+                      </td>
+                      <td>{company.cash.toLocaleString()}원</td>
+                      <td style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                        <button onClick={() => setSelectedCompanyId(company.id)}>상세</button>
+                        <button disabled={companyActionId === company.id} onClick={() => handleRenameCompany(company)} title="팀명 수정">수정</button>
+                        <button disabled={companyActionId === company.id} onClick={() => handleDeleteCompany(company)} style={{ color: '#dc2626' }} title="기업 삭제">삭제</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
 
         {selectedCompany && <div className="teacher-nested-modal" role="dialog" aria-modal="true" aria-labelledby="company-status-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedCompanyId(null); }}><section className="teacher-company-status-modal" style={{ ...card, border: '2px solid #2563eb' }}><div className="teacher-modal-heading"><h3 id="company-status-title" style={{ margin: 0 }}>🔎 {selectedCompany.name} 전체 상황</h3><button type="button" onClick={() => setSelectedCompanyId(null)} aria-label="기업 상황 닫기">✕</button></div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '9px' }}><span>업종 경험 <b style={{ float: 'right' }}>{selectedCompany.industryTraitIcon} {selectedCompany.industryTraitName || '선택 전'}</b></span><span>자본금 <b style={{ float: 'right' }}>{selectedCompany.cash.toLocaleString()}원</b></span><span>대출잔액 <b style={{ float: 'right' }}>{(selectedCompany.loanBalance || 0).toLocaleString()}원</b></span><span>현재 노동자 <b style={{ float: 'right' }}>{selectedCompany.employeeCount || 1}명</b></span><span>현재 보유 기계 <b style={{ float: 'right' }}>{selectedCompany.machineCount || 1}대</b></span><span>이번 라운드 퀴즈 <b style={{ float: 'right' }}>{selectedCompany.quizCompletedRounds?.includes(activeRoom.currentRound) ? '완료' : '미완료'}</b></span>{UPGRADE_OPTIONS.map((upgrade) => <span key={upgrade.id}>{upgrade.icon} {upgrade.name}<b style={{ float: 'right' }}>Lv.{selectedCompany.upgrades?.[upgrade.id] || 0}</b></span>)}</div>{selectedCompanyPlan ? <div style={{ marginTop: '12px', padding: '12px', background: '#eff6ff', borderRadius: '9px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: '8px' }}><span>선택시장 <b style={{ float: 'right' }}>{selectedCompanyPlan.marketName}</b></span><span>확정 고용 <b style={{ float: 'right' }}>{selectedCompanyPlan.workerCount}명</b></span><span>확정 기계 <b style={{ float: 'right' }}>{selectedCompanyPlan.machineCountAfter}대</b></span><span>생산/판매희망 <b style={{ float: 'right' }}>{selectedCompanyPlan.producedQuantity}/{selectedCompanyPlan.offeredQuantity ?? selectedCompanyPlan.producedQuantity}</b></span><span>한계생산 <b style={{ float: 'right' }}>{selectedCompanyPlan.marginalProduct.toFixed(2)}</b></span><span>한계비용 <b style={{ float: 'right' }}>{selectedCompanyPlan.marginalCost?.toLocaleString() || '-'}원</b></span><span>생산비 <b style={{ float: 'right' }}>{selectedCompanyPlan.productionCost.toLocaleString()}원</b></span><span>매출 <b style={{ float: 'right' }}>{(selectedCompanyPlan.revenue || 0).toLocaleString()}원</b></span><span>이윤 <b style={{ float: 'right' }}>{(selectedCompanyPlan.economicProfit ?? selectedCompanyPlan.profit ?? 0).toLocaleString()}원</b></span></div> : <p style={{ color: '#64748b' }}>이번 라운드 생산계획을 아직 제출하지 않았습니다.</p>}<div className="teacher-student-roster"><h4>👥 학생 명단 추가·수정·삭제</h4><StudentRosterEditor key={`${selectedCompany.id}:${selectedCompany.studentMembers?.length || 0}`} initialMembers={selectedCompany.studentMembers || []} onSave={(members) => companyService.updateStudentMembers(selectedCompany.roomId, selectedCompany.id, members)} /><div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}><button onClick={() => window.open(`/student?roomId=${encodeURIComponent(selectedCompany.roomId)}&name=${encodeURIComponent(selectedCompany.name)}&readonly=1`, '_blank')}>읽기 전용 학생 기업화면 열기</button><button disabled={companyActionId === selectedCompany.id} onClick={() => handleRenameCompany(selectedCompany)}>팀명 수정</button><button disabled={companyActionId === selectedCompany.id} onClick={() => { handleDeleteCompany(selectedCompany); setSelectedCompanyId(null); }} style={{ color: '#dc2626' }}>기업 삭제</button></div></div></section></div>}
 

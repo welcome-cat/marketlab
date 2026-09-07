@@ -3,6 +3,7 @@ import type { DocumentData, DocumentReference, QueryDocumentSnapshot, QuerySnaps
 import { db } from './firebase/config';
 import type { DemandEvent, EconomicsQuiz, Market, ReflectionSheet, Room } from '../types/domain';
 import { DEFAULT_ECONOMICS_QUIZZES, DEFAULT_REFLECTION_SHEETS, DEFAULT_UNLOCK_ROUNDS, DEMAND_EVENT_OPTIONS, EVENT_INTENSITY_SCALE, MARKETS } from '../types/domain';
+import { getRecoveryMessage } from './newsService';
 
 const baselineEvents = (): DemandEvent[] => MARKETS.map((market) => ({
   marketId: market.id,
@@ -113,21 +114,6 @@ const optionIsTemporary = (optionId?: string) => Boolean(DEMAND_EVENT_OPTIONS.fi
 const isTemporaryDemandEvent = (event?: DemandEvent) => optionIsTemporary(event?.optionId);
 const isTemporarySupplyEvent = (event?: DemandEvent) => optionIsTemporary(event?.supplyOptionId);
 
-const recoveryMessageFor = (optionId: string | undefined, fallbackTitle: string | undefined) => {
-  switch (optionId) {
-    case 'income_up': return { direction: '수요 감소', reason: '일시적으로 증가했던 소득이 평소 수준으로 돌아왔습니다' };
-    case 'income_down': return { direction: '수요 증가', reason: '일시적으로 감소했던 소득이 평소 수준으로 돌아왔습니다' };
-    case 'preference_up': return { direction: '수요 감소', reason: '단기 유행이 끝나 수요가 유행 이전 수준으로 돌아왔습니다' };
-    case 'preference_down': return { direction: '수요 증가', reason: '단기 불매운동이 끝나 수요가 이전 수준으로 회복되었습니다' };
-    case 'expect_price_up': return { direction: '수요 감소', reason: '미래 가격 상승 예상이 해소되어 앞당겨졌던 구매가 정상화되었습니다' };
-    case 'expect_price_down': return { direction: '수요 증가', reason: '미래 가격 하락 예상이 해소되어 미뤄졌던 구매가 정상화되었습니다' };
-    case 'producer_expect_up': return { direction: '공급 증가', reason: '미래 가격 상승 예상이 해소되어 미뤄졌던 판매가 정상화되었습니다' };
-    case 'producer_expect_down': return { direction: '공급 감소', reason: '미래 가격 하락 예상이 해소되어 앞당겨졌던 판매가 정상화되었습니다' };
-    case 'rice_typhoon': return { direction: '공급 증가', reason: '태풍 피해가 끝나 쌀 공급이 평소 수준으로 회복되었습니다' };
-    default: return { direction: '시장 정상화', reason: `지난 라운드의 ‘${fallbackTitle || '일시적 충격'}’ 영향이 사라졌습니다` };
-  }
-};
-
 const applyDemandEvents = (markets: Market[], events: DemandEvent[]) => markets.map((market) => {
   const event = events.find((item) => item.marketId === market.id);
   const baseline = market;
@@ -185,17 +171,23 @@ const removeExpiredTemporaryEffects = (markets: Market[], previousEvents: Demand
   };
 });
 
-const withRecoveryNews = (events: DemandEvent[], previousEvents: DemandEvent[]) => events.map((event) => {
+const withRecoveryNews = (events: DemandEvent[], previousEvents: DemandEvent[], templates?: Record<string, { headline: string; body: string }>) => events.map((event) => {
   const previous = previousEvents.find((item) => item.marketId === event.marketId);
-  const recovered: Array<{ direction: string; reason: string }> = [];
-  if (isTemporaryDemandEvent(previous)) recovered.push(recoveryMessageFor(previous?.optionId, previous?.title));
-  if (isTemporarySupplyEvent(previous)) recovered.push(recoveryMessageFor(previous?.supplyOptionId, previous?.supplyTitle));
+  const recovered: Array<{ direction: string; reason: string; headline: string; body: string }> = [];
+  if (isTemporaryDemandEvent(previous)) recovered.push(getRecoveryMessage(previous?.optionId, previous?.title, templates));
+  if (isTemporarySupplyEvent(previous)) recovered.push(getRecoveryMessage(previous?.supplyOptionId, previous?.supplyTitle, templates));
   if (!recovered.length) return event;
   const recoverySummary = recovered.map((item) => `${item.direction}: ${item.reason}`).join(' · ');
+  const recoveryBody = recovered.map((item) => item.body).join(' ');
+
+  // 이미 기사 제목이나 본문에 정상화/회복 내용이 포함되어 있으면 (교사가 사전에 직접 편집/확정한 경우) 중복 합성하지 않음
+  const alreadyInHeadline = recovered.some((item) => event.articleHeadline.includes(item.reason) || (item.headline && event.articleHeadline.includes(item.headline)));
+  const alreadyInBody = recovered.some((item) => event.articleBody.includes(item.reason) || (item.body && event.articleBody.includes(item.body.slice(0, 15))));
+
   return {
     ...event,
-    articleHeadline: `${recoverySummary} — ${event.articleHeadline}`,
-    articleBody: `${recovered.map((item) => item.reason).join('. ')}. 이 정상화 효과와 이번 라운드의 새로운 사건은 함께 시장에 반영됩니다. ${event.articleBody}`,
+    articleHeadline: alreadyInHeadline ? event.articleHeadline : `${recoverySummary} — ${event.articleHeadline}`,
+    articleBody: alreadyInBody ? event.articleBody : `${recoveryBody} ${event.articleBody}`,
   };
 });
 
@@ -254,7 +246,7 @@ export const roomService = {
       const room = normalizeRoom(snapshot.id, snapshot.data() as Partial<Room>);
       if (room.status !== 'WAITING') throw new Error('ROOM_ALREADY_STARTED');
       const selectedEvents = room.pendingDemandEvents.length === room.markets.length ? room.pendingDemandEvents : baselineEvents();
-      const nextEvents = withRecoveryNews(selectedEvents, room.demandEvents);
+      const nextEvents = withRecoveryNews(selectedEvents, room.demandEvents, room.newsTemplates);
       transaction.update(roomRef, {
         status: 'RUNNING',
         roundPhase: 'DECISION',
@@ -275,7 +267,7 @@ export const roomService = {
       if (room.status !== 'RUNNING') throw new Error('ROOM_NOT_RUNNING');
       if (room.roundPhase !== 'RESULT') throw new Error('ROUND_NOT_SETTLED');
       const selectedEvents = room.pendingDemandEvents.length === room.markets.length ? room.pendingDemandEvents : baselineEvents();
-      const nextEvents = withRecoveryNews(selectedEvents, room.demandEvents);
+      const nextEvents = withRecoveryNews(selectedEvents, room.demandEvents, room.newsTemplates);
       transaction.update(roomRef, {
         currentRound: room.currentRound + 1,
         roundPhase: 'DECISION',
