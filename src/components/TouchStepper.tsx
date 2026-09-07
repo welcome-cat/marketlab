@@ -12,6 +12,7 @@ interface TouchStepperProps {
   min: number;
   max: number;
   step?: number;
+  buttonStep?: number;
   unit?: string;
   onChange: (value: number) => void;
   disabled?: boolean;
@@ -29,6 +30,7 @@ export const TouchStepper: React.FC<TouchStepperProps> = ({
   min,
   max,
   step = 1,
+  buttonStep,
   unit = '',
   onChange,
   disabled = false,
@@ -41,6 +43,7 @@ export const TouchStepper: React.FC<TouchStepperProps> = ({
 }) => {
   const effectiveMax = Math.max(min, max);
   const clampedValue = Math.max(min, Math.min(effectiveMax, value));
+  const effectiveButtonStep = buttonStep ?? step;
 
   const handleStep = (delta: number) => {
     if (disabled) return;
@@ -72,8 +75,8 @@ export const TouchStepper: React.FC<TouchStepperProps> = ({
           type="button"
           className="touch-circle-btn"
           disabled={disabled || clampedValue <= min}
-          onClick={() => handleStep(-step)}
-          aria-label={`${labelString} ${step} 감소`}
+          onClick={() => handleStep(-effectiveButtonStep)}
+          aria-label={`${labelString} ${effectiveButtonStep} 감소`}
         >
           −
         </button>
@@ -92,8 +95,8 @@ export const TouchStepper: React.FC<TouchStepperProps> = ({
           type="button"
           className="touch-circle-btn"
           disabled={disabled || clampedValue >= effectiveMax}
-          onClick={() => handleStep(step)}
-          aria-label={`${labelString} ${step} 증가`}
+          onClick={() => handleStep(effectiveButtonStep)}
+          aria-label={`${labelString} ${effectiveButtonStep} 증가`}
         >
           ＋
         </button>

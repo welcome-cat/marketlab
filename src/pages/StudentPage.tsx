@@ -290,8 +290,8 @@ export const StudentPage: React.FC = () => {
   const maximumSellableQuantity = isRiceMarket && !isRiceHarvestRound ? 0 : (inventory?.quantity || 0) + plannedProductionQty;
   const offeredQuantityScope = `${company.id}:${room.currentRound}:${selectedMarket.id}`;
   const desiredOfferedQuantity = plan
-    ? plan.offeredQuantity ?? plan.producedQuantity
-    : Math.min(maximumSellableQuantity, offeredQuantitySelection?.scope === offeredQuantityScope ? offeredQuantitySelection.quantity : maximumSellableQuantity);
+    ? Math.min(effectiveProductionQty, plan.offeredQuantity ?? plan.producedQuantity)
+    : Math.min(effectiveProductionQty, offeredQuantitySelection?.scope === offeredQuantityScope ? offeredQuantitySelection.quantity : effectiveProductionQty);
   const expectedRevenue = effectivePrice * desiredOfferedQuantity;
   const selectedMarketParticipants = new Set(marketPlans.filter((item) => item.productId === selectedMarket.id).map((item) => item.companyId)).size;
   const expectedOperatingProfit = expectedRevenue - quote.productionCost;
@@ -395,6 +395,17 @@ export const StudentPage: React.FC = () => {
     catch { setMessage('이번 라운드의 퀴즈 보상은 이미 받았습니다.'); }
   };
   const applyAskingPrice = async (nextPrice = askingPrice) => { if (!plan) return; const bounded = Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, nextPrice)); setAskingPrice(bounded); try { await productionService.updateAskingPrice(roomId, company.id, room.currentRound, bounded); setMessage('변경한 가격이 즉시 판매에 반영되었습니다.'); } catch (reason) { setMessage(reason instanceof Error && reason.message === 'PRICE_OUT_OF_RANGE' ? '선택한 예측 방향의 허용 범위 안에서만 가격을 조정할 수 있습니다.' : '30초 판매시간이 끝나 가격을 변경할 수 없습니다.'); } };
+  const applyOfferedQuantity = async (nextQuantity: number) => {
+    const bounded = Math.max(0, Math.min(maximumSellableQuantity, nextQuantity));
+    setOfferedQuantitySelection({ scope: offeredQuantityScope, quantity: bounded });
+    if (!plan) return;
+    try {
+      await productionService.updateOfferedQuantity(roomId, company.id, room.currentRound, bounded);
+      setMessage('판매 희망 수량이 즉시 반영되었습니다.');
+    } catch {
+      setMessage('판매 수량을 변경하지 못했습니다.');
+    }
+  };
   const submitReflection = async () => {
     const answers = currentReflectionSheet.questions.map((question) => ({ questionId: question.id, question: question.prompt, answer: (reflectionAnswers[question.id] || '').trim() }));
     if (answers.some((answer) => !answer.answer)) return setMessage('활동지의 모든 문항을 작성해주세요.');
@@ -446,8 +457,8 @@ export const StudentPage: React.FC = () => {
         <p>가격 방향을 다시 검토하고 필요하면 이 창에서 바로 변경하세요.</p>
         <div className="confirmation-summary"><span>시장 <b>{selectedMarket.icon} {selectedMarket.name}</b></span><span>고용 <b>{workerCount}명</b></span><span>생산량 <b>{plannedProductionQty.toLocaleString()}{quantityUnit}</b></span><span>최대 판매 <b>{desiredOfferedQuantity.toLocaleString()}{quantityUnit}</b></span><span>{publicPriceLabel} <b>{publicReferencePrice.toLocaleString()}원</b></span></div>
         <label>가격 방향 예측<select value={pricePrediction} onChange={(event) => changePricePrediction(event.target.value as 'UP' | 'SAME' | 'DOWN')}><option value="UP">상승</option><option value="SAME">유지</option><option value="DOWN">하락</option></select></label>
-        <label>{selectedMarket.priceControl === 'MARKET_PRICE' ? '최저 판매 희망가격' : '우리 기업 판매가격'}<input type="number" min={predictionMinimumPrice} max={predictionMaximumPrice} step="10" value={askingPrice} onChange={(event) => setAskingPrice(Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, Number(event.target.value) || predictionMinimumPrice)))} /><small>허용 범위 {predictionMinimumPrice.toLocaleString()}~{predictionMaximumPrice.toLocaleString()}원</small></label>
-        <label>최대 판매 희망 수량<input type="number" min="0" max={maximumSellableQuantity} step="1" value={desiredOfferedQuantity} disabled={maximumSellableQuantity === 0} onChange={(event) => setOfferedQuantitySelection({ scope: offeredQuantityScope, quantity: Math.max(0, Math.min(maximumSellableQuantity, Math.floor(Number(event.target.value) || 0))) })} /></label>
+        <label>{selectedMarket.priceControl === 'MARKET_PRICE' ? '최저 판매 희망가격' : '우리 기업 판매가격'}<input type="number" min={predictionMinimumPrice} max={predictionMaximumPrice} step="1" value={askingPrice} onChange={(event) => setAskingPrice(Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, Number(event.target.value) || predictionMinimumPrice)))} /><small>허용 범위 {predictionMinimumPrice.toLocaleString()}~{predictionMaximumPrice.toLocaleString()}원</small></label>
+        <label>최대 판매 희망 수량<input type="number" min="0" max={plannedProductionQty} step="1" value={desiredOfferedQuantity} disabled={plannedProductionQty === 0} onChange={(event) => setOfferedQuantitySelection({ scope: offeredQuantityScope, quantity: Math.max(0, Math.min(plannedProductionQty, Math.floor(Number(event.target.value) || 0))) })} /></label>
         <p className="confirmation-question">가격 방향 예측을 ‘{pricePrediction === 'UP' ? '상승' : pricePrediction === 'DOWN' ? '하락' : '유지'}’, 희망가격을 {askingPrice.toLocaleString()}원으로 확정하시겠습니까?</p>
         <div className="confirmation-actions"><button type="button" onClick={() => setProductionConfirmOpen(false)} disabled={submitting}>돌아가서 수정</button><button type="button" onClick={submitProduction} disabled={submitting}>{submitting ? '확정 중...' : '예측과 생산 결정 확정'}</button></div>
       </section>
@@ -663,7 +674,7 @@ export const StudentPage: React.FC = () => {
       <p style={{ fontSize: '13px', color: '#475569' }}>선택한 투자는 이번 생산계획부터 적용되고 이후 라운드에도 유지됩니다. 고급 설비는 기계가 여러 대일수록 효과가 커집니다.</p>
     </section>
 
-    <section className="student-production" style={{ ...card, border: '2px solid #2563eb' }}><h2 style={{ marginTop: 0, fontSize: '18px' }}>고용과 생산 결정</h2><div className="production-reference-price"><span>{room.currentRound === 1 ? '초기 기준가격' : '이전 라운드 거래가격'}</span><strong>{publicReferencePrice.toLocaleString()}원/{quantityUnit}</strong></div>
+    <section className="student-production" style={{ ...card, border: '2px solid #2563eb' }}><h2 style={{ marginTop: 0, fontSize: '18px' }}>고용과 생산 결정</h2>
       {plan && (
         <div style={{ margin: '12px 0', padding: '12px 14px', borderRadius: '10px', background: '#f0fdf4', border: '1px solid #86efac', color: '#166534' }}>
           <strong>✅ Round {plan.roundNumber} 생산 결정 확정 완료</strong>
@@ -679,6 +690,7 @@ export const StudentPage: React.FC = () => {
           value={effectiveWorkerCount}
           min={1}
           max={Math.max(1, cashLimitedWorkerCount)}
+          maxLabel={`한도 ${Math.max(1, cashLimitedWorkerCount)}명`}
           step={1}
           unit="명"
           color="blue"
@@ -707,7 +719,7 @@ export const StudentPage: React.FC = () => {
           {!plan && quote.currentMarginalProduct === 0 && <p style={{ color: '#dc2626', fontSize: '13px' }}>⚠️ 자본설비에 비해 노동자가 너무 많아 마지막 노동자의 한계생산이 0입니다. 이 고용량으로는 생산을 확정할 수 없습니다.</p>}
         </div>
         <div className="production-indicators">
-          {[['현금으로 생산 가능량', `${effectiveCapacity}${quantityUnit}`, null], ['마지막 노동자의 한계생산', `${effectiveMarginalProduct}개`, '한계생산물'], ['다음 노동자의 한계생산', `${plan ? '-' : `${quote.nextMarginalProduct}개`}`, '한계생산물'], ['현재 한계비용', marginalCostLabel, '한계비용']].map(([label, value, concept]) => <div key={label} style={{ padding: '11px', background: '#f8fafc', borderRadius: '9px' }}><small>{label}{concept && <ConceptHelp concept={concept as '한계생산물' | '한계비용'} />}</small><strong style={{ display: 'block', color: '#1d4ed8' }}>{value}</strong></div>)}
+          {[[room.currentRound === 1 ? '초기 기준가격' : '이전 라운드 거래가격', `${publicReferencePrice.toLocaleString()}원/${quantityUnit}`, null], ['현금으로 생산 가능량', `${effectiveCapacity}${quantityUnit}`, null], ['마지막 노동자의 한계생산', `${effectiveMarginalProduct}개`, '한계생산물'], ['다음 노동자의 한계생산', `${plan ? '-' : `${quote.nextMarginalProduct}개`}`, '한계생산물'], ['현재 한계비용', marginalCostLabel, '한계비용']].map(([label, value, concept]) => <div key={label} style={{ padding: '11px', background: '#f8fafc', borderRadius: '9px' }}><small>{label}{concept && <ConceptHelp concept={concept as '한계생산물' | '한계비용'} />}</small><strong style={{ display: 'block', color: '#1d4ed8' }}>{value}</strong></div>)}
         </div>
       </div>
     </section>
@@ -753,14 +765,18 @@ export const StudentPage: React.FC = () => {
           value={askingPrice}
           min={predictionMinimumPrice}
           max={predictionMaximumPrice}
-          step={10}
+          step={1}
+          buttonStep={10}
           unit="원"
           color="purple"
-          disabled={Boolean(plan) && room.roundPhase !== 'SELLING'}
-          onChange={(val) => setAskingPrice(val)}
+          disabled={room.status === 'FINISHED'}
+          onChange={(val) => {
+            setAskingPrice(val);
+            if (plan) void applyAskingPrice(val);
+          }}
           quickPresets={[
-            { label: '-50원', value: Math.max(predictionMinimumPrice, askingPrice - 50) },
-            { label: '+50원', value: Math.min(predictionMaximumPrice, askingPrice + 50) },
+            { label: '-10원', delta: -10 },
+            { label: '+10원', delta: 10 },
             { label: '기준가격', value: Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, publicReferencePrice)) }
           ]}
           description={`예측 범위: ${predictionMinimumPrice.toLocaleString()}원 ~ ${predictionMaximumPrice.toLocaleString()}원`}
@@ -772,18 +788,18 @@ export const StudentPage: React.FC = () => {
           label="최대 판매 희망 수량"
           value={desiredOfferedQuantity}
           min={0}
-          max={maximumSellableQuantity}
+          max={effectiveProductionQty}
           step={1}
           unit={quantityUnit}
           color="purple"
-          disabled={Boolean(plan) || maximumSellableQuantity === 0}
-          onChange={(val) => setOfferedQuantitySelection({ scope: offeredQuantityScope, quantity: val })}
+          disabled={effectiveProductionQty === 0}
+          onChange={(val) => applyOfferedQuantity(val)}
           quickPresets={[
             { label: '전량 보관 (0)', value: 0 },
-            { label: '절반 판매', value: Math.floor(maximumSellableQuantity / 2) },
-            { label: '전량 판매', value: maximumSellableQuantity }
+            { label: '절반 판매', value: Math.floor(effectiveProductionQty / 2) },
+            { label: '전량 판매', value: effectiveProductionQty }
           ]}
-          description={isRiceMarket && !isRiceHarvestRound ? '쌀은 수확 라운드에 누적 재고의 판매 수량을 정할 수 있습니다.' : `판매 가능 ${maximumSellableQuantity.toLocaleString()}${quantityUnit} · 판매하지 않은 물량은 다음 라운드 재고로 남습니다.`}
+          description={isRiceMarket && !isRiceHarvestRound ? '쌀은 수확 라운드에 누적 재고의 판매 수량을 정할 수 있습니다.' : `판매 가능 ${effectiveProductionQty.toLocaleString()}${quantityUnit} · 판매하지 않은 물량은 다음 라운드 재고로 남습니다.`}
         />
       </div>
       {room.roundPhase === 'SELLING' && plan && <div style={{ display: 'flex', gap: '7px', marginTop: '9px', flexWrap: 'wrap' }}><button onClick={() => void applyAskingPrice(askingPrice - 10)}>− 10원 즉시 반영</button><button onClick={() => void applyAskingPrice(askingPrice + 10)}>+ 10원 즉시 반영</button></div>}
@@ -813,7 +829,8 @@ export const StudentPage: React.FC = () => {
           value={askingPrice}
           min={predictionMinimumPrice}
           max={predictionMaximumPrice}
-          step={10}
+          step={1}
+          buttonStep={10}
           unit="원"
           color="amber"
           onChange={(val) => {
@@ -821,8 +838,8 @@ export const StudentPage: React.FC = () => {
             void applyAskingPrice(val);
           }}
           quickPresets={[
-            { label: '− 10원 즉시 반영', value: Math.max(predictionMinimumPrice, askingPrice - 10) },
-            { label: '+ 10원 즉시 반영', value: Math.min(predictionMaximumPrice, askingPrice + 10) },
+            { label: '-10원', delta: -10 },
+            { label: '+10원', delta: 10 },
             { label: '기준가격', value: Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, publicReferencePrice)) }
           ]}
           description={`예측 범위: ${predictionMinimumPrice.toLocaleString()}원 ~ ${predictionMaximumPrice.toLocaleString()}원`}

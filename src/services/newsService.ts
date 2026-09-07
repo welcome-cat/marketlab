@@ -187,7 +187,6 @@ export const getRecoveryMessage = (
 export const defaultNewsTemplates = (): Record<string, { headline: string; body: string }> => {
   const eventTemplates = Object.fromEntries(
     DEMAND_EVENT_OPTIONS
-      .filter((option) => !['baseline', 'supply_baseline'].includes(option.id))
       .map((option) => [option.id, {
         headline: ({
           income_up: '지갑에 생긴 여유, 유통가 방문과 구매 계획에 온기', income_down: '생활비 부담 커진 가계, 장바구니부터 다시 살핀다',
@@ -204,6 +203,8 @@ export const defaultNewsTemplates = (): Record<string, { headline: string; body:
           producer_expect_up: '더 나은 가격 기다리는 생산자들, 출하 대신 보관 선택', producer_expect_down: '가격 약세 전망에 출하 서두르는 생산업계',
           rice_typhoon: '태풍 지나간 산지, 침수·쓰러짐 피해에 수확량 우려', producer_tax: '생산 단계 새 세금…업체들 단위당 비용 재산정',
           producer_subsidy: '생산 지원금 지급 시작…미뤘던 생산계획 다시 꺼낸다',
+          baseline: '소비자 리포트…평소와 비슷한 구매 흐름 이어져',
+          supply_baseline: '생산 동향…원료 조달과 출하 일정 평소 수준 유지',
         } as Record<string, string>)[option.id] || `${option.title}, 시장 참여자 움직임에 변수`,
         body: [
           option.effectType === 'SUPPLY' ? '최근 생산과 출하 현장에서 평소와 다른 움직임이 관찰되고 있다.' : '최근 소비 현장에서 평소와 다른 움직임이 관찰되고 있다.',

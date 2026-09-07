@@ -651,13 +651,23 @@ export const TeacherPage: React.FC = () => {
             const recoveryBodyPrefix = recoveryItems.map((r) => r.body).join(' ');
 
             const baseConsumerArticle = composeEventArticle(market, selectedOption, 'CONSUMER');
+            const consumerTemplate = newsTemplateDraft[selectedOption.id];
+            const consumerHeadline = consumerTemplate?.headline || baseConsumerArticle.headline;
+            const consumerBody = consumerTemplate?.body || baseConsumerArticle.body;
             const defaultArticle = hasRecovery ? {
-              ...baseConsumerArticle,
-              headline: `${recoverySummary} — ${baseConsumerArticle.headline}`,
-              body: `${recoveryBodyPrefix} ${baseConsumerArticle.body}`,
-            } : baseConsumerArticle;
+              headline: `${recoverySummary} — ${consumerHeadline}`,
+              body: `${recoveryBodyPrefix} ${consumerBody}`,
+            } : {
+              headline: consumerHeadline,
+              body: consumerBody,
+            };
 
-            const defaultSupplyArticle = composeEventArticle(market, selectedSupplyOption, 'PRODUCTION');
+            const baseSupplyArticle = composeEventArticle(market, selectedSupplyOption, 'PRODUCTION');
+            const supplyTemplate = newsTemplateDraft[selectedSupplyOption.id];
+            const defaultSupplyArticle = {
+              headline: supplyTemplate?.headline || baseSupplyArticle.headline,
+              body: supplyTemplate?.body || baseSupplyArticle.body,
+            };
             const supplyOptions = DEMAND_EVENT_OPTIONS.filter((option) => option.effectType === 'SUPPLY' && (option.id !== 'rice_typhoon' || market.id === 'market_toy'));
             return <article key={market.id} style={{ background: '#fff', padding: '13px', borderRadius: '10px', border: hasRecovery ? '2px solid #f59e0b' : '1px solid #fcd34d' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -689,12 +699,12 @@ export const TeacherPage: React.FC = () => {
 
         {showNewsTemplates && <div className="teacher-nested-modal" role="dialog" aria-modal="true" aria-labelledby="news-template-title"><section className="teacher-news-templates" style={{ ...card, border: '2px solid #d97706', maxWidth: '800px', maxHeight: '85vh', overflowY: 'auto' }}><div className="teacher-modal-heading"><h3 id="news-template-title" style={{ margin: 0 }}>🗂 상황별 신문기사 편집</h3><button type="button" onClick={() => setShowNewsTemplates(false)} aria-label="상황별 신문기사 닫기">✕</button></div>
           <div style={{ display: 'flex', gap: '8px', margin: '12px 0' }}>
-            <button type="button" onClick={() => setNewsTemplateTab('EVENTS')} style={{ padding: '8px 14px', borderRadius: '8px', border: 0, background: newsTemplateTab === 'EVENTS' ? '#d97706' : '#f1f5f9', color: newsTemplateTab === 'EVENTS' ? '#fff' : '#334155', fontWeight: 800 }}>📰 사건별 기본 원고 (25종)</button>
+            <button type="button" onClick={() => setNewsTemplateTab('EVENTS')} style={{ padding: '8px 14px', borderRadius: '8px', border: 0, background: newsTemplateTab === 'EVENTS' ? '#d97706' : '#f1f5f9', color: newsTemplateTab === 'EVENTS' ? '#fff' : '#334155', fontWeight: 800 }}>📰 사건별 기본 원고 (27종)</button>
             <button type="button" onClick={() => setNewsTemplateTab('RECOVERY')} style={{ padding: '8px 14px', borderRadius: '8px', border: 0, background: newsTemplateTab === 'RECOVERY' ? '#d97706' : '#f1f5f9', color: newsTemplateTab === 'RECOVERY' ? '#fff' : '#334155', fontWeight: 800 }}>🔄 단기 충격 정상화·회복 원고 (9종)</button>
           </div>
           {newsTemplateTab === 'EVENTS' ? <>
-            <p style={{ color: '#64748b', fontSize: '13px', margin: '0 0 10px' }}>각 사건에 사용할 신문식 기본 원고입니다. 수정해 저장하면 이후 기사 발행 시 수정본을 우선 사용합니다.</p>
-            <div style={{ display: 'grid', gap: '10px' }}>{DEMAND_EVENT_OPTIONS.filter((option) => !['baseline', 'supply_baseline'].includes(option.id)).map((option) => { const draft = newsTemplateDraft[option.id] || DEFAULT_NEWS_TEMPLATES[option.id]; return <details key={option.id} className="news-editor"><summary>{option.effectType === 'SUPPLY' ? '공급' : '수요'} · {option.title}{option.temporary ? ' (일시 충격)' : ''}</summary><label>제목<input value={draft.headline} onChange={(event) => setNewsTemplateDraft((current) => ({ ...current, [option.id]: { ...draft, headline: event.target.value } }))} /></label><label>내용<textarea rows={7} value={draft.body} onChange={(event) => setNewsTemplateDraft((current) => ({ ...current, [option.id]: { ...draft, body: event.target.value } }))} /></label></details>; })}</div>
+            <p style={{ color: '#64748b', fontSize: '13px', margin: '0 0 10px' }}>각 사건(평상시 변동 없음 포함)에 사용할 신문식 기본 원고입니다. 수정해 저장하면 이후 기사 발행 시 수정본을 우선 사용합니다.</p>
+            <div style={{ display: 'grid', gap: '10px' }}>{DEMAND_EVENT_OPTIONS.map((option) => { const draft = newsTemplateDraft[option.id] || DEFAULT_NEWS_TEMPLATES[option.id]; return <details key={option.id} className="news-editor"><summary>{option.effectType === 'SUPPLY' ? '공급' : '수요'} · {option.title}{option.factor === 'BASELINE' ? ' (평상시)' : ''}{option.temporary ? ' (일시 충격)' : ''}</summary><label>제목<input value={draft.headline} onChange={(event) => setNewsTemplateDraft((current) => ({ ...current, [option.id]: { ...draft, headline: event.target.value } }))} /></label><label>내용<textarea rows={7} value={draft.body} onChange={(event) => setNewsTemplateDraft((current) => ({ ...current, [option.id]: { ...draft, body: event.target.value } }))} /></label></details>; })}</div>
           </> : <>
             <p style={{ color: '#64748b', fontSize: '13px', margin: '0 0 10px' }}>단기 충격(일시적 유행, 소득 변화, 가격 예상 등)이 끝난 다음 라운드에 시장이 정상 수준으로 복귀할 때 신문 머리말과 본문에 합성되는 정상화 안내문입니다. 수정해 저장하면 이후 기사 발행 시 수정본을 우선 사용합니다.</p>
             <div style={{ display: 'grid', gap: '10px' }}>{RECOVERY_TEMPLATE_OPTIONS.map((item) => { const draft = newsTemplateDraft[item.templateKey] || DEFAULT_NEWS_TEMPLATES[item.templateKey]; return <details key={item.templateKey} className="news-editor"><summary>{item.effectType === 'SUPPLY' ? '공급' : '수요'} · {item.sourceEventTitle} 종료 후 정상화 ({item.defaultDirection})</summary><label>기사 머리말(요약)<input value={draft.headline} onChange={(event) => setNewsTemplateDraft((current) => ({ ...current, [item.templateKey]: { ...draft, headline: event.target.value } }))} /></label><label>기사 본문(상세)<textarea rows={5} value={draft.body} onChange={(event) => setNewsTemplateDraft((current) => ({ ...current, [item.templateKey]: { ...draft, body: event.target.value } }))} /></label></details>; })}</div>

@@ -664,12 +664,34 @@ export const productionService = {
       if (!roomSnapshot.exists() || !planSnapshot.exists()) throw new Error('PLAN_NOT_FOUND');
       const room = normalizeRoom(roomSnapshot.id, roomSnapshot.data() as Partial<Room>);
       const plan = planSnapshot.data() as ProductionPlan;
-      if (room.roundPhase !== 'SELLING' || Date.now() >= (room.sellingEndsAt || 0)) throw new Error('PRICE_UPDATE_CLOSED');
+      if (room.status !== 'RUNNING') throw new Error('ROOM_NOT_RUNNING');
+      const isDecision = room.roundPhase === 'DECISION';
+      const isSelling = room.roundPhase === 'SELLING' && Date.now() < (room.sellingEndsAt || 0);
+      if (!isDecision && !isSelling) throw new Error('PRICE_UPDATE_CLOSED');
       const prediction = plan.pricePrediction || 'SAME';
       const minimum = Math.max(100, plan.announcedPrice * (prediction === 'DOWN' ? 0.7 : prediction === 'SAME' ? 0.95 : 1));
       const maximum = plan.announcedPrice * (prediction === 'UP' ? 1.3 : prediction === 'SAME' ? 1.05 : 1);
       if (nextPrice < minimum || nextPrice > maximum) throw new Error('PRICE_OUT_OF_RANGE');
       transaction.update(planRef, { askingPrice: Math.round(nextPrice), updatedAt: Date.now() });
+    });
+  },
+
+  updateOfferedQuantity: async (roomId: string, companyId: string, roundNumber: number, nextQuantity: number): Promise<void> => {
+    if (!Number.isInteger(nextQuantity) || nextQuantity < 0) throw new Error('INVALID_OFFERED_QUANTITY');
+    const roomRef = doc(db, 'rooms', roomId);
+    const planRef = doc(db, 'rooms', roomId, 'productionPlans', `${companyId}_${roundNumber}`);
+    await runTransaction(db, async (transaction) => {
+      const roomSnapshot = await transaction.get(roomRef);
+      const planSnapshot = await transaction.get(planRef);
+      if (!roomSnapshot.exists() || !planSnapshot.exists()) throw new Error('PLAN_NOT_FOUND');
+      const room = normalizeRoom(roomSnapshot.id, roomSnapshot.data() as Partial<Room>);
+      const plan = planSnapshot.data() as ProductionPlan;
+      if (room.status !== 'RUNNING') throw new Error('ROOM_NOT_RUNNING');
+      const isDecision = room.roundPhase === 'DECISION';
+      const isSelling = room.roundPhase === 'SELLING' && Date.now() < (room.sellingEndsAt || 0);
+      if (!isDecision && !isSelling) throw new Error('OFFERED_QUANTITY_UPDATE_CLOSED');
+      if (nextQuantity > plan.producedQuantity) throw new Error('OFFERED_QUANTITY_EXCEEDED');
+      transaction.update(planRef, { offeredQuantity: nextQuantity, updatedAt: Date.now() });
     });
   },
 
