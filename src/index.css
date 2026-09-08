@@ -869,4 +869,11 @@ input[type='range']::-moz-range-thumb:hover {
   line-height: 1.5;
 }
 
-
+.sale-price-buttons { display: grid; gap: 12px; }
+.sale-price-buttons > strong { text-align: center; font-size: 26px; color: #92400e; }
+.sale-price-buttons > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.sale-price-buttons button { padding: 14px 4px; border-radius: 12px; border: 1px solid #fbbf24; background: #fffbeb; color: #92400e; font-weight: 800; font-size: 16px; touch-action: none; user-select: none; }
+.sale-price-buttons button:active { background: #fde68a; }
+.sale-price-buttons button:focus-visible { outline: 3px solid #d97706; outline-offset: 2px; }
+.sale-price-buttons button:disabled { opacity: .4; }
+.sale-price-buttons small { color: #78716c; line-height: 1.5; }

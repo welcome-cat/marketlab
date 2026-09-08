@@ -4,6 +4,7 @@ import { FirmSupplyCurve } from '../components/FirmSupplyCurve';
 import { ConceptHelp } from '../components/ConceptHelp';
 import { StudentRosterEditor } from '../components/StudentRosterEditor';
 import { TouchStepper } from '../components/TouchStepper';
+import { PriceButtons } from '../components/PriceButtons';
 import { calculateLoanTerms, calculateMachineRepairCost, calculateMarketClearing, calculateMinimumWorkerCount, calculateProductionQuote, companyService, getTechnologyMarketFit, machineDepreciationRate, productionService, reflectionService, roomService, scaleMarketEventFactor } from '../services';
 import type { Company, InventoryItem, LearningReflection, Market, ProductionPlan, Room, UnlockRounds, UpgradeType } from '../types/domain';
 import { DEFAULT_REFLECTION_SHEETS, EVENT_INTENSITY_SCALE, INDUSTRY_TRAITS, INITIAL_COMPANY_CASH, UPGRADE_OPTIONS } from '../types/domain';
@@ -35,12 +36,9 @@ const errorText = (error: unknown) => {
 const DIAGNOSIS_STARTING_CAPITAL = INITIAL_COMPANY_CASH;
 const DIAGNOSIS_HORIZON_ROUNDS = 3;
 const getPublicMarketPrice = (market: Market) => market.publicPrice ?? market.basePrice;
-const splitAcrossRounds = (quantity: number) => Array.from({ length: DIAGNOSIS_HORIZON_ROUNDS }, (_, index) =>
-  Math.floor(quantity / DIAGNOSIS_HORIZON_ROUNDS) + (index < quantity % DIAGNOSIS_HORIZON_ROUNDS ? 1 : 0));
 
 const calculateDiagnosisProjection = (company: Company, market: Market, quantity: number, workerCount: number) => {
-  const isRice = market.id === 'market_toy';
-  const roundQuantities = isRice ? splitAcrossRounds(quantity) : Array(DIAGNOSIS_HORIZON_ROUNDS).fill(quantity);
+  const roundQuantities = Array(DIAGNOSIS_HORIZON_ROUNDS).fill(quantity);
   const totalOutput = roundQuantities.reduce((sum, roundQuantity) => sum + roundQuantity, 0);
   let totalEconomicCost = 0;
   let totalCashOutlay = 0;
@@ -57,8 +55,7 @@ const calculateDiagnosisProjection = (company: Company, market: Market, quantity
     // 생산비를 먼저 지급한 뒤 판매대금을 받으므로, 라운드 중 필요한 최대 현금을 따로 계산한다.
     outstandingCash += quote.netCashCost;
     peakCashRequired = Math.max(peakCashRequired, outstandingCash);
-    if (!isRice) outstandingCash -= market.announcedPrice * roundQuantity;
-    else if (index === DIAGNOSIS_HORIZON_ROUNDS - 1) outstandingCash -= market.announcedPrice * totalOutput;
+    outstandingCash -= market.announcedPrice * roundQuantity;
   });
 
   const revenue = market.announcedPrice * totalOutput;
@@ -79,8 +76,8 @@ const calculateDiagnosisProjection = (company: Company, market: Market, quantity
 
 const calculateAffordableQuantity = (company: Company, market: Market, workerCount: number) => {
   const perRoundCapacity = calculateProductionQuote(company, market, 1, workerCount).productionCapacity;
-  // 쌀 진단 슬라이더는 3라운드 누적 생산량이므로 토지·노동의 라운드별 생산능력도 3회 합산한다.
-  const capacity = market.id === 'market_toy' ? perRoundCapacity * DIAGNOSIS_HORIZON_ROUNDS : perRoundCapacity;
+  // 모든 시장의 슬라이더는 라운드당 생산량이다.
+  const capacity = perRoundCapacity;
   let low = 0;
   let high = capacity;
   while (low < high) {
@@ -156,6 +153,11 @@ export const StudentPage: React.FC = () => {
   const diagnosisPanelRef = useRef<HTMLDetailsElement | null>(null);
   const sellingPanelRef = useRef<HTMLElement | null>(null);
   const sellingScrollKey = useRef('');
+  const askingPriceSaveTimer = useRef<number | null>(null);
+  const pendingAskingPrice = useRef<number | null>(null);
+  const askingPriceSaveSequence = useRef<Promise<void>>(Promise.resolve());
+  const askingPriceRevision = useRef(0);
+  const [priceSaveStatus, setPriceSaveStatus] = useState('');
 
   useEffect(() => {
     if (!roomId || !companyName) return;
@@ -186,7 +188,9 @@ export const StudentPage: React.FC = () => {
   useEffect(() => {
     if (!companyId) return;
     return companyService.subscribeCompany(roomId, companyId, (value) => {
-      if (value) { setCompany(value); if (value.currentMarketId) setSelectedMarketId(value.currentMarketId); }
+      // 최초 접속 시 registerCompany에서 저장된 시장을 반영한다. 이후 실시간 회사 갱신이
+      // 학생이 아직 확정하지 않은 새 시장 선택을 과거 currentMarketId로 되돌리면 안 된다.
+      if (value) setCompany(value);
       else { setCompany(null); setError('교사가 이 기업을 삭제했습니다.'); }
     });
   }, [roomId, companyId]);
@@ -202,9 +206,16 @@ export const StudentPage: React.FC = () => {
     if (!companyId || currentRound === undefined) return;
     return productionService.subscribeProductionPlan(roomId, companyId, currentRound, (value) => {
       setPlan(value);
-      if (value?.askingPrice) setAskingPrice(value.askingPrice);
+      // 슬라이더 저장 중에는 지연 도착한 이전 스냅샷으로 화면 값을 되돌리지 않는다.
+      if (value?.askingPrice && pendingAskingPrice.current === null) setAskingPrice(value.askingPrice);
       if (value?.pricePrediction) setPricePrediction(value.pricePrediction);
     });
+  }, [roomId, companyId, currentRound]);
+
+  useEffect(() => () => {
+    if (askingPriceSaveTimer.current !== null) window.clearTimeout(askingPriceSaveTimer.current);
+    pendingAskingPrice.current = null;
+    askingPriceRevision.current += 1;
   }, [roomId, companyId, currentRound]);
 
   useEffect(() => {
@@ -262,11 +273,9 @@ export const StudentPage: React.FC = () => {
   const minimumWorkerCount = calculateMinimumWorkerCount(company, room.currentRound);
   const quantityUnit = selectedMarket.id === 'market_toy' ? 'kg' : '개';
   const isRiceMarket = selectedMarket.id === 'market_toy';
-  const riceCycleStartRound = room.currentRound - ((room.currentRound - 1) % selectedMarket.productionCycleRounds);
-  const riceCycleProduced = isRiceMarket && company.riceCycleStartRound === riceCycleStartRound ? company.riceCycleProducedQuantity || 0 : 0;
   const riceLandCapacity = selectedMarket.landCapacityPerCycle || Number.POSITIVE_INFINITY;
   const riceLandRemaining = isRiceMarket ? riceLandCapacity : Number.POSITIVE_INFINITY;
-  const isRiceHarvestRound = isRiceMarket && room.currentRound % selectedMarket.productionCycleRounds === 0;
+  const isRiceHarvestRound = isRiceMarket;
   const plannedProductionQty = isRiceMarket ? Math.min(productionQty, riceLandRemaining) : productionQty;
   const sellableMachineCount = (company.machineAssets || []).filter((asset) => asset.marketId === selectedMarket.id && asset.purchasedRound < room.currentRound).reduce((sum, asset) => sum + asset.quantity, 0);
   const quote = calculateProductionQuote(company, selectedMarket, plannedProductionQty, workerCount, machinePurchases, upgradePurchase, !inventory, room.currentRound, machineSales, machineRepairs);
@@ -287,11 +296,11 @@ export const StudentPage: React.FC = () => {
   const effectiveSupplyCurve = (plan && plan.supplyCurve && plan.supplyCurve.length > 0) ? plan.supplyCurve : quote.supplyCurve;
   const effectiveCapacity = plan ? plan.productionCapacity : cashLimitedCapacity;
   const effectivePrice = askingPrice;
-  const maximumSellableQuantity = isRiceMarket && !isRiceHarvestRound ? 0 : (inventory?.quantity || 0) + plannedProductionQty;
+  const maximumSellableQuantity = (inventory?.quantity || 0) + (plan ? 0 : plannedProductionQty);
   const offeredQuantityScope = `${company.id}:${room.currentRound}:${selectedMarket.id}`;
   const desiredOfferedQuantity = plan
-    ? Math.min(effectiveProductionQty, plan.offeredQuantity ?? plan.producedQuantity)
-    : Math.min(effectiveProductionQty, offeredQuantitySelection?.scope === offeredQuantityScope ? offeredQuantitySelection.quantity : effectiveProductionQty);
+    ? plan.offeredQuantity ?? plan.producedQuantity
+    : Math.min(maximumSellableQuantity, offeredQuantitySelection?.scope === offeredQuantityScope ? offeredQuantitySelection.quantity : maximumSellableQuantity);
   const expectedRevenue = effectivePrice * desiredOfferedQuantity;
   const selectedMarketParticipants = new Set(marketPlans.filter((item) => item.productId === selectedMarket.id).map((item) => item.companyId)).size;
   const expectedOperatingProfit = expectedRevenue - quote.productionCost;
@@ -347,8 +356,15 @@ export const StudentPage: React.FC = () => {
       setProductionConfirmOpen(false);
       setMessage('생산 결정이 제출되었습니다. 시장가격에 따른 거래 실행을 기다려주세요.');
     } catch (reason) {
-      const code = reason instanceof Error ? reason.message : '';
+      const code = reason instanceof Error && 'code' in reason ? String(reason.code) : reason instanceof Error ? reason.message : 'UNKNOWN';
+      console.error('[생산 확정 실패]', reason, { round: room.currentRound, marketId: selectedMarket.id, requestedQuantity: plannedProductionQty, workerCount, askingPrice, pricePrediction });
+      setProductionConfirmOpen(false);
       const messages: Record<string, string> = {
+        PRICE_OUT_OF_RANGE: '희망가격이 허용 범위를 벗어났습니다. 가격을 다시 확인해주세요.',
+        MARKET_EXIT_REQUIRED: '기존 시장 퇴거·자산 정산 후 새 시장에서 확정해주세요.',
+        INSUFFICIENT_CASH: '저장 시점의 보유현금이 부족합니다.',
+        'permission-denied': '저장 권한이 거부되었습니다. 교사에게 오류 코드를 알려주세요.',
+        unavailable: '서버에 연결하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해주세요.',
         PRODUCTION_ALREADY_CONFIRMED: '이번 라운드의 결정은 이미 확정되었습니다.',
         PRODUCTION_CAPACITY_EXCEEDED: '선택한 노동·기계·기술로 생산할 수 있는 양을 넘었습니다.',
         SPENDING_LIMIT_EXCEEDED: '보유 자본금을 넘게 지출할 수 없습니다.',
@@ -367,7 +383,7 @@ export const StudentPage: React.FC = () => {
         UPGRADE_MAX_LEVEL: '해당 업그레이드는 최대 3단계입니다.',
         COMPANY_TRAITS_REQUIRED: '먼저 기업 진단서에서 업종 경험과 생산방식을 확정해주세요.',
       };
-      setMessage(messages[code] || '생산 확정 중 오류가 발생했습니다.');
+      setMessage(`${messages[code] || '생산 확정에 실패했습니다. 오류 코드를 교사에게 알려주세요.'} (오류: ${code})`);
     } finally { setSubmitting(false); }
   };
 
@@ -394,7 +410,40 @@ export const StudentPage: React.FC = () => {
     try { await companyService.awardQuiz(roomId, company.id, room.currentRound, currentQuiz.reward); setQuizOpen(false); setMessage(`정답입니다! 운영자금 ${currentQuiz.reward.toLocaleString()}원을 확보했습니다.`); }
     catch { setMessage('이번 라운드의 퀴즈 보상은 이미 받았습니다.'); }
   };
-  const applyAskingPrice = async (nextPrice = askingPrice) => { if (!plan) return; const bounded = Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, nextPrice)); setAskingPrice(bounded); try { await productionService.updateAskingPrice(roomId, company.id, room.currentRound, bounded); setMessage('변경한 가격이 즉시 판매에 반영되었습니다.'); } catch (reason) { setMessage(reason instanceof Error && reason.message === 'PRICE_OUT_OF_RANGE' ? '선택한 예측 방향의 허용 범위 안에서만 가격을 조정할 수 있습니다.' : '30초 판매시간이 끝나 가격을 변경할 수 없습니다.'); } };
+  const applyAskingPrice = (nextPrice = askingPrice, immediate = false) => {
+    if (!plan) return;
+    const bounded = Math.round(Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, nextPrice)));
+    setAskingPrice(bounded);
+    pendingAskingPrice.current = bounded;
+    const revision = ++askingPriceRevision.current;
+    setPriceSaveStatus('가격 반영 중…');
+    if (askingPriceSaveTimer.current !== null) window.clearTimeout(askingPriceSaveTimer.current);
+    const save = () => {
+      askingPriceSaveTimer.current = null;
+      const priceToSave = pendingAskingPrice.current;
+      if (priceToSave === null) return;
+      // 빠른 연속 입력도 서버에는 선택 순서대로 저장해 오래된 요청이 마지막 값을
+      // 덮어쓰지 않게 한다.
+      askingPriceSaveSequence.current = askingPriceSaveSequence.current.then(async () => {
+        // 통신을 기다리는 동안 추가 입력이 있었다면 중간 값은 건너뛰고 최신 값만 보낸다.
+        if (revision !== askingPriceRevision.current) return;
+        try {
+          await productionService.updateAskingPrice(roomId, company.id, room.currentRound, priceToSave);
+          if (revision === askingPriceRevision.current) {
+            pendingAskingPrice.current = null;
+            setPriceSaveStatus(`${priceToSave.toLocaleString()}원 반영 완료`);
+          }
+        } catch (reason) {
+          if (revision !== askingPriceRevision.current) return;
+          pendingAskingPrice.current = null;
+          setPriceSaveStatus('가격 반영 실패 · 적용 중인 가격을 확인해주세요.');
+          setMessage(reason instanceof Error && reason.message === 'PRICE_OUT_OF_RANGE' ? '선택한 예측 방향의 허용 범위 안에서만 가격을 조정할 수 있습니다.' : '30초 판매시간이 끝나 가격을 변경할 수 없습니다.');
+        }
+      });
+    };
+    if (immediate) save();
+    else askingPriceSaveTimer.current = window.setTimeout(save, 180);
+  };
   const applyOfferedQuantity = async (nextQuantity: number) => {
     const bounded = Math.max(0, Math.min(maximumSellableQuantity, nextQuantity));
     setOfferedQuantitySelection({ scope: offeredQuantityScope, quantity: bounded });
@@ -458,7 +507,7 @@ export const StudentPage: React.FC = () => {
         <div className="confirmation-summary"><span>시장 <b>{selectedMarket.icon} {selectedMarket.name}</b></span><span>고용 <b>{workerCount}명</b></span><span>생산량 <b>{plannedProductionQty.toLocaleString()}{quantityUnit}</b></span><span>최대 판매 <b>{desiredOfferedQuantity.toLocaleString()}{quantityUnit}</b></span><span>{publicPriceLabel} <b>{publicReferencePrice.toLocaleString()}원</b></span></div>
         <label>가격 방향 예측<select value={pricePrediction} onChange={(event) => changePricePrediction(event.target.value as 'UP' | 'SAME' | 'DOWN')}><option value="UP">상승</option><option value="SAME">유지</option><option value="DOWN">하락</option></select></label>
         <label>{selectedMarket.priceControl === 'MARKET_PRICE' ? '최저 판매 희망가격' : '우리 기업 판매가격'}<input type="number" min={predictionMinimumPrice} max={predictionMaximumPrice} step="1" value={askingPrice} onChange={(event) => setAskingPrice(Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, Number(event.target.value) || predictionMinimumPrice)))} /><small>허용 범위 {predictionMinimumPrice.toLocaleString()}~{predictionMaximumPrice.toLocaleString()}원</small></label>
-        <label>최대 판매 희망 수량<input type="number" min="0" max={plannedProductionQty} step="1" value={desiredOfferedQuantity} disabled={plannedProductionQty === 0} onChange={(event) => setOfferedQuantitySelection({ scope: offeredQuantityScope, quantity: Math.max(0, Math.min(plannedProductionQty, Math.floor(Number(event.target.value) || 0))) })} /></label>
+        <label>최대 판매 희망 수량<input type="number" min="0" max={maximumSellableQuantity} step="1" value={desiredOfferedQuantity} disabled={maximumSellableQuantity === 0} onChange={(event) => setOfferedQuantitySelection({ scope: offeredQuantityScope, quantity: Math.max(0, Math.min(maximumSellableQuantity, Math.floor(Number(event.target.value) || 0))) })} /></label>
         <p className="confirmation-question">가격 방향 예측을 ‘{pricePrediction === 'UP' ? '상승' : pricePrediction === 'DOWN' ? '하락' : '유지'}’, 희망가격을 {askingPrice.toLocaleString()}원으로 확정하시겠습니까?</p>
         <div className="confirmation-actions"><button type="button" onClick={() => setProductionConfirmOpen(false)} disabled={submitting}>돌아가서 수정</button><button type="button" onClick={submitProduction} disabled={submitting}>{submitting ? '확정 중...' : '예측과 생산 결정 확정'}</button></div>
       </section>
@@ -580,7 +629,7 @@ export const StudentPage: React.FC = () => {
 
     <section className="student-round" style={{ ...card, border: `1px solid ${isRunning ? '#86efac' : '#fde68a'}`, background: isRunning ? '#f0fdf4' : '#fffbeb' }}>
       <strong>{room.status === 'WAITING' ? '⏳ 교사가 수업을 시작하기 전입니다.' : room.status === 'FINISHED' ? '🏁 수업이 종료되었습니다.' : room.roundPhase === 'RESULT' ? `📊 Round ${room.currentRound} 거래 결과` : room.roundPhase === 'SELLING' ? `🛒 Round ${room.currentRound} 판매 ${sellingMonth}개월 차 / 4개월` : room.roundPhase === 'SETTLING' ? `⏳ Round ${room.currentRound} 거래 계산 중` : `▶ Round ${room.currentRound} 기업 선택 중`}</strong>
-      <span style={{ display: 'block', fontSize: '13px', color: '#64748b', marginTop: '4px' }}>1라운드는 4개월입니다. 카페·운동화·스마트폰은 매 라운드 판매하고, 쌀은 3라운드 동안 재배한 뒤 주기 마지막에 수확·판매합니다.</span>
+      <span style={{ display: 'block', fontSize: '13px', color: '#64748b', marginTop: '4px' }}>1라운드는 4개월입니다. 모든 시장에서 매 라운드 생산·판매합니다. 쌀도 매 라운드 수확하고, 남은 물량은 재고로 보관합니다.</span>
       {currentQuiz ? <><button className="quiz-reward-button" type="button" disabled={(company.quizCompletedRounds || []).includes(room.currentRound)} onClick={() => setQuizOpen((open) => !open)}>{(company.quizCompletedRounds || []).includes(room.currentRound) ? '✅ 이번 라운드 퀴즈 완료' : '💰 경제 퀴즈로 현금 확보'}</button>{quizOpen && <div style={{ marginTop: '10px', padding: '12px', background: '#fff', borderRadius: '10px' }}><strong>{currentQuiz.question}</strong><div style={{ display: 'flex', gap: '7px', marginTop: '8px', flexWrap: 'wrap' }}>{currentQuiz.choices.map((choice, index) => <button type="button" key={`${currentQuiz.id}-${index}`} onClick={() => answerQuiz(index)}>{choice}</button>)}</div><small style={{ display: 'block', marginTop: '6px', color: '#64748b' }}>정답 보상 {currentQuiz.reward.toLocaleString()}원 · 라운드당 1회</small></div>}</> : <small style={{ display: 'block', marginTop: '12px', color: '#64748b' }}>이번 라운드에는 경제 퀴즈가 없습니다.</small>}
     </section>
 
@@ -621,10 +670,10 @@ export const StudentPage: React.FC = () => {
           const projection = calculateDiagnosisProjection(company, diagnosisMarket, simulatedQuantity, diagnosisWorkers);
           const fit = getTechnologyMarketFit(company, market);
           const unit = market.id === 'market_toy' ? 'kg' : '개';
-          const quantityLabel = market.id === 'market_toy' ? '3라운드 총 모의 생산량' : '라운드당 모의 생산량';
-          return <article key={market.id} style={{ padding: '13px', background: '#fff', border: '1px solid #99f6e4', borderRadius: '10px' }}><strong>{market.icon} {market.name}</strong><label style={{ display: 'block', marginTop: '8px', fontSize: '12px' }}>{quantityLabel} {simulatedQuantity.toLocaleString()}{unit}<input type="range" min={capacity.affordableCapacity > 0 ? 1 : 0} max={Math.max(1, capacity.affordableCapacity)} value={simulatedQuantity} disabled={capacity.affordableCapacity === 0} onChange={(event) => setDiagnosisQuantities((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label><span style={{ display: 'block' }}>기술적 생산 가능량 <b style={{ float: 'right' }}>{capacity.technicalCapacity.toLocaleString()}{unit}</b></span><span style={{ display: 'block', color: '#7c3aed' }}>{Math.round(DIAGNOSIS_STARTING_CAPITAL / 10000)}만원으로 운영 가능 <b style={{ float: 'right' }}>{capacity.affordableCapacity.toLocaleString()}{unit}</b></span><span style={{ display: 'block' }}>최대 필요 현금 <b style={{ float: 'right' }}>{projection.peakCashRequired.toLocaleString()}원</b></span><span style={{ display: 'block' }}>3라운드 예상매출 <b style={{ float: 'right' }}>{projection.revenue.toLocaleString()}원</b></span><span style={{ display: 'block' }}>평균비용 <b style={{ float: 'right' }}>{projection.averageCost.toLocaleString()}원</b></span><span style={{ display: 'block' }}>한계비용 <b style={{ float: 'right' }}>{projection.marginalCost > 0 ? projection.marginalCost.toLocaleString() : '-'}원</b></span><span style={{ display: 'block' }}>3라운드 이윤 <b style={{ float: 'right', color: projection.profit >= 0 ? '#059669' : '#dc2626' }}>{projection.profit.toLocaleString()}원</b></span><span style={{ display: 'block' }}>라운드당 평균이윤 <b style={{ float: 'right', color: projection.averageProfitPerRound >= 0 ? '#059669' : '#dc2626' }}>{projection.averageProfitPerRound.toLocaleString()}원</b></span><span style={{ display: 'block' }}>투자금 대비 이윤률 <b style={{ float: 'right', color: projection.roi >= 0 ? '#059669' : '#dc2626' }}>{projection.roi.toFixed(1)}%</b></span><span style={{ display: 'block', color: market.id === 'market_toy' ? '#b45309' : '#64748b' }}>현금 회수 <b style={{ float: 'right' }}>{market.id === 'market_toy' ? '3라운드 말' : '매 라운드'}</b></span><small style={{ display: 'block', marginTop: '8px', color: '#0f766e' }}>{fit.hint}</small></article>;
+          const quantityLabel = '라운드당 모의 생산량';
+          return <article key={market.id} style={{ padding: '13px', background: '#fff', border: '1px solid #99f6e4', borderRadius: '10px' }}><strong>{market.icon} {market.name}</strong><label style={{ display: 'block', marginTop: '8px', fontSize: '12px' }}>{quantityLabel} {simulatedQuantity.toLocaleString()}{unit}<input type="range" min={capacity.affordableCapacity > 0 ? 1 : 0} max={Math.max(1, capacity.affordableCapacity)} value={simulatedQuantity} disabled={capacity.affordableCapacity === 0} onChange={(event) => setDiagnosisQuantities((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label><span style={{ display: 'block' }}>기술적 생산 가능량 <b style={{ float: 'right' }}>{capacity.technicalCapacity.toLocaleString()}{unit}</b></span><span style={{ display: 'block', color: '#7c3aed' }}>{Math.round(DIAGNOSIS_STARTING_CAPITAL / 10000)}만원으로 운영 가능 <b style={{ float: 'right' }}>{capacity.affordableCapacity.toLocaleString()}{unit}</b></span><span style={{ display: 'block' }}>최대 필요 현금 <b style={{ float: 'right' }}>{projection.peakCashRequired.toLocaleString()}원</b></span><span style={{ display: 'block' }}>3라운드 예상매출 <b style={{ float: 'right' }}>{projection.revenue.toLocaleString()}원</b></span><span style={{ display: 'block' }}>평균비용 <b style={{ float: 'right' }}>{projection.averageCost.toLocaleString()}원</b></span><span style={{ display: 'block' }}>한계비용 <b style={{ float: 'right' }}>{projection.marginalCost > 0 ? projection.marginalCost.toLocaleString() : '-'}원</b></span><span style={{ display: 'block' }}>3라운드 이윤 <b style={{ float: 'right', color: projection.profit >= 0 ? '#059669' : '#dc2626' }}>{projection.profit.toLocaleString()}원</b></span><span style={{ display: 'block' }}>라운드당 평균이윤 <b style={{ float: 'right', color: projection.averageProfitPerRound >= 0 ? '#059669' : '#dc2626' }}>{projection.averageProfitPerRound.toLocaleString()}원</b></span><span style={{ display: 'block' }}>투자금 대비 이윤률 <b style={{ float: 'right', color: projection.roi >= 0 ? '#059669' : '#dc2626' }}>{projection.roi.toFixed(1)}%</b></span><span style={{ display: 'block', color: market.id === 'market_toy' ? '#b45309' : '#64748b' }}>현금 회수 <b style={{ float: 'right' }}>{'매 라운드'}</b></span><small style={{ display: 'block', marginTop: '8px', color: '#0f766e' }}>{fit.hint}</small></article>;
         })}</div>
-        <p style={{ marginBottom: 0, fontSize: '12px', color: '#64748b' }}>모든 시장을 동일한 3라운드 기간으로 비교합니다. 카페·운동화·스마트폰은 매 라운드 생산·판매하고, 쌀은 3라운드 동안 비용을 부담한 뒤 마지막에 한 번 판매합니다. 모의 이윤은 전량 판매 가정이며 실제 수요·경쟁·미판매 결과에 따라 달라질 수 있습니다.</p>
+        <p style={{ marginBottom: 0, fontSize: '12px', color: '#64748b' }}>모든 시장을 동일한 3라운드 기간으로 비교합니다. 모든 시장이 매 라운드 생산·판매하고 매출을 회수합니다. 모의 이윤은 전량 판매 가정이며 실제 수요·경쟁·미판매 결과에 따라 달라질 수 있습니다.</p>
       </div>}
     </details>
 
@@ -643,7 +692,7 @@ export const StudentPage: React.FC = () => {
           color="blue"
           disabled={Boolean(plan) || room.currentRound < room.unlockRounds.machines}
           onChange={(val) => setMachinePurchases(val)}
-          description={room.currentRound < room.unlockRounds.machines ? `🔒 Round ${room.unlockRounds.machines}부터 기계 투자가 열립니다.` : `1대 ${selectedMarket.machinePrice.toLocaleString()}원 · 구입 후 ${quote.machineCountAfter}/${selectedMarket.maxMachines}대 · 라운드 임대료 ${quote.rentCost.toLocaleString()}원`}
+          description={room.currentRound < room.unlockRounds.machines ? `🔒 Round ${room.unlockRounds.machines}부터 기계 투자가 열립니다.` : `1대 ${selectedMarket.machinePrice.toLocaleString()}원 · 구입 후 ${quote.machineCountAfter}/${selectedMarket.maxMachines}대 · 라운드 ${isRiceMarket ? '농지 이용료' : '임대료'} ${quote.rentCost.toLocaleString()}원`}
         />
         <TouchStepper
           label={`기존 ${selectedMarket.id === 'market_toy' ? '농기계' : '기계'} 매각`}
@@ -683,7 +732,7 @@ export const StudentPage: React.FC = () => {
           </span>
         </div>
       )}
-      {isRiceMarket && <div style={{ marginBottom: '13px', padding: '12px', borderRadius: '10px', background: isRiceHarvestRound ? '#fef3c7' : '#ecfdf5', color: isRiceHarvestRound ? '#92400e' : '#166534' }}><strong>{isRiceHarvestRound ? '🌾 수확·판매 라운드' : `🌱 재배 ${room.currentRound - riceCycleStartRound + 1}/3라운드`}</strong><small style={{ display: 'block', marginTop: '4px' }}>1포대=10kg · 라운드마다 새로 적용되는 농지 한도 {riceLandCapacity}kg · 이번 주기 누적 생산 {riceCycleProduced}kg{isRiceHarvestRound ? ` · 현재 재배 물량과 이번 생산분을 합쳐 판매합니다.` : ' · 생산물은 주기 마지막 라운드까지 재배됩니다.'}</small></div>}
+      {isRiceMarket && <div style={{ marginBottom: '13px', padding: '12px', borderRadius: '10px', background: '#fef3c7', color: '#92400e' }}><strong>🌾 매 라운드 수확·판매</strong><small style={{ display: 'block' }}>1포대=10kg · 노동·기계 생산능력과 보유현금 내에서 생산 · 이전 재고와 이번 생산분을 함께 판매할 수 있습니다. 기계가 늘어나면 작업 공간과 이용 농지가 확대되어 농지 이용료가 증가합니다.</small></div>}
       <div style={{ marginTop: '12px' }}>
         <TouchStepper
           label="총 고용 노동자 수"
@@ -708,7 +757,7 @@ export const StudentPage: React.FC = () => {
                 <input aria-label="우리 기업의 희망 공급량" type="range" min={isRiceMarket ? 0 : 1} max={Math.max(isRiceMarket ? 0 : 1, effectiveCapacity)} step="1" value={Math.min(effectiveProductionQty, Math.max(isRiceMarket ? 0 : 1, effectiveCapacity))} disabled={Boolean(plan) || effectiveCapacity < (isRiceMarket ? 0 : 1)} onChange={(event) => setProductionQty(Number(event.target.value))} style={{ width: '100%' }} />
                 <button className="supply-step-button" type="button" aria-label="희망 공급량 1단위 증가" disabled={Boolean(plan) || plannedProductionQty >= effectiveCapacity} onClick={() => setProductionQty((current) => Math.min(effectiveCapacity, current + 1))}>＋</button>
               </span>
-              <span style={{ display: 'flex', justifyContent: 'space-between', color: '#64748b', fontWeight: 400 }}><small>{isRiceMarket ? 0 : 1}{quantityUnit}</small><strong style={{ color: '#b45309' }}>{Math.min(effectiveProductionQty, effectiveCapacity).toLocaleString()}{quantityUnit}</strong><small>{isRiceMarket ? '토지·현금 한도' : '현금 한도'} {effectiveCapacity.toLocaleString()}{quantityUnit}</small></span>
+              <span style={{ display: 'flex', justifyContent: 'space-between', color: '#64748b', fontWeight: 400 }}><small>{isRiceMarket ? 0 : 1}{quantityUnit}</small><strong style={{ color: '#b45309' }}>{Math.min(effectiveProductionQty, effectiveCapacity).toLocaleString()}{quantityUnit}</strong><small>{'생산능력·현금 한도'} {effectiveCapacity.toLocaleString()}{quantityUnit}</small></span>
             </div>
           </div>
           <div style={{ marginTop: '10px', padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
@@ -788,21 +837,20 @@ export const StudentPage: React.FC = () => {
           label="최대 판매 희망 수량"
           value={desiredOfferedQuantity}
           min={0}
-          max={effectiveProductionQty}
+          max={maximumSellableQuantity}
           step={1}
           unit={quantityUnit}
           color="purple"
-          disabled={effectiveProductionQty === 0}
+          disabled={maximumSellableQuantity === 0}
           onChange={(val) => applyOfferedQuantity(val)}
           quickPresets={[
             { label: '전량 보관 (0)', value: 0 },
-            { label: '절반 판매', value: Math.floor(effectiveProductionQty / 2) },
-            { label: '전량 판매', value: effectiveProductionQty }
+            { label: '절반 판매', value: Math.floor(maximumSellableQuantity / 2) },
+            { label: '전량 판매', value: maximumSellableQuantity }
           ]}
-          description={isRiceMarket && !isRiceHarvestRound ? '쌀은 수확 라운드에 누적 재고의 판매 수량을 정할 수 있습니다.' : `판매 가능 ${effectiveProductionQty.toLocaleString()}${quantityUnit} · 판매하지 않은 물량은 다음 라운드 재고로 남습니다.`}
+          description={isRiceMarket && !isRiceHarvestRound ? '쌀은 수확 라운드에 누적 재고의 판매 수량을 정할 수 있습니다.' : `판매 가능 ${maximumSellableQuantity.toLocaleString()}${quantityUnit} · 판매하지 않은 물량은 다음 라운드 재고로 남습니다.`}
         />
       </div>
-      {room.roundPhase === 'SELLING' && plan && <div style={{ display: 'flex', gap: '7px', marginTop: '9px', flexWrap: 'wrap' }}><button onClick={() => void applyAskingPrice(askingPrice - 10)}>− 10원 즉시 반영</button><button onClick={() => void applyAskingPrice(askingPrice + 10)}>+ 10원 즉시 반영</button></div>}
       {selectedMarket.priceControl === 'FIRM_PRICE' && <small style={{ display: 'block', marginTop: '7px', color: '#64748b' }}>현재 진입 기업 {selectedMarketParticipants}개사 · 가격이 높아질수록 수요가 점진적으로 감소합니다.</small>}
     </section>
 
@@ -824,26 +872,14 @@ export const StudentPage: React.FC = () => {
         <span>현재 남은 판매대상 <b style={{ float: 'right' }}>{Math.max(0, plannedSaleQuantity - liveSoldQuantity)}{quantityUnit}</b></span>
       </div>
       <div style={{ marginTop: '12px', padding: '12px', borderRadius: '9px', border: '1px solid #fbbf24', background: '#fff' }}>
-        <TouchStepper
-          label="판매 중 희망가격 조정"
+        <PriceButtons
           value={askingPrice}
           min={predictionMinimumPrice}
           max={predictionMaximumPrice}
-          step={1}
-          buttonStep={10}
-          unit="원"
-          color="amber"
-          onChange={(val) => {
-            setAskingPrice(val);
-            void applyAskingPrice(val);
-          }}
-          quickPresets={[
-            { label: '-10원', delta: -10 },
-            { label: '+10원', delta: 10 },
-            { label: '기준가격', value: Math.max(predictionMinimumPrice, Math.min(predictionMaximumPrice, publicReferencePrice)) }
-          ]}
-          description={`예측 범위: ${predictionMinimumPrice.toLocaleString()}원 ~ ${predictionMaximumPrice.toLocaleString()}원`}
+          disabled={readOnly || sellingProgress >= 1}
+          onChange={(value) => applyAskingPrice(value, true)}
         />
+        <p role="status" style={{ fontSize: '13px', color: '#92400e' }}>{priceSaveStatus}</p>
       </div>
       <div style={{ marginTop: '12px', padding: '12px', borderRadius: '9px', background: projectedSellThrough < 1 ? '#fee2e2' : '#dcfce7', color: projectedSellThrough < 1 ? '#991b1b' : '#166534' }}><strong>🔎 판매 상황</strong><p style={{ margin: '5px 0 0', fontSize: '13px', lineHeight: 1.55 }}>{saleAnalysis}</p></div>
     </section>}
@@ -853,7 +889,7 @@ export const StudentPage: React.FC = () => {
 
     <section className="student-cost" style={card}><h2 style={{ marginTop: 0, fontSize: '18px' }}>비용과 예상 결과</h2>
       <div style={{ display: 'grid', gap: '7px', fontSize: '14px' }}>
-        <span>임대료(고정비)<ConceptHelp concept="고정비" /> <b style={{ float: 'right' }}>{(plan?.rentCost ?? quote.rentCost).toLocaleString()}원</b></span>
+        <span>{isRiceMarket ? '농지 이용료(고정비)' : '임대료(고정비)'}<ConceptHelp concept="고정비" /> <b style={{ float: 'right' }}>{(plan?.rentCost ?? quote.rentCost).toLocaleString()}원</b></span>
         <span>총임금 <b style={{ float: 'right' }}>{(plan?.wageCost ?? quote.wageCost).toLocaleString()}원</b></span>
         {(plan?.earlyTerminationCost ?? quote.earlyTerminationCost) > 0 && <span>신규 고용자 조기퇴직 보상(라운드 임금의 25%) <b style={{ float: 'right', color: '#dc2626' }}>{(plan?.earlyTerminationCost ?? quote.earlyTerminationCost).toLocaleString()}원</b></span>}
         <span>제품 1개당 재료비(가변비)<ConceptHelp concept="가변비" /> <b style={{ float: 'right' }}>{quote.unitMaterialCost.toLocaleString()}원</b></span>

@@ -53,7 +53,7 @@ export const calculateWorkerMarginalProduct = (
   const machines = Math.max(1, machineCount);
   const effectiveMachines = 1 + Math.max(0, machines - 1) * (1 + upgrades.advancedEquipment * 0.12);
   const isRice = market.id === 'market_toy';
-  const productivityBase = isRice ? technologyAdjustedBase * (1 + (machines - 1) * 0.12) : technologyAdjustedBase;
+  const productivityBase = isRice ? technologyAdjustedBase * (1 + (machines - 1) * (market.riceMachineProductivityBoost ?? 0.12)) : technologyAdjustedBase;
   // 지수식은 기계가 많을 때 체감이 거의 사라졌다가 노동자가 늘면 급락했다.
   // 완만한 1차항과 점차 커지는 2차항을 함께 사용해 P=MC 교차점이 선택 범위 안에 오게 한다.
   const machineCongestionRelief = 1 + 0.2 * Math.max(0, effectiveMachines - 1);
@@ -516,8 +516,8 @@ export const productionService = {
       const company = companySnapshot.data() as Company;
       const referencePrice = market.publicPrice ?? market.basePrice;
       const prediction = input.pricePrediction || 'SAME';
-      const minimumAskingPrice = Math.max(100, referencePrice * (prediction === 'DOWN' ? 0.7 : prediction === 'SAME' ? 0.95 : 1));
-      const maximumAskingPrice = referencePrice * (prediction === 'UP' ? 1.3 : prediction === 'SAME' ? 1.05 : 1);
+      const minimumAskingPrice = Math.max(100, Math.round(referencePrice * (prediction === 'DOWN' ? 0.7 : prediction === 'SAME' ? 0.95 : 1)));
+      const maximumAskingPrice = Math.round(referencePrice * (prediction === 'UP' ? 1.3 : prediction === 'SAME' ? 1.05 : 1));
       if ((input.askingPrice || 0) < minimumAskingPrice || (input.askingPrice || 0) > maximumAskingPrice) throw new Error('PRICE_OUT_OF_RANGE');
       if (company.currentMarketId && company.currentMarketId !== market.id) throw new Error('MARKET_EXIT_REQUIRED');
       if (room.currentRound === 1 && company.traitsConfirmed === false) throw new Error('COMPANY_TRAITS_REQUIRED');
@@ -669,8 +669,8 @@ export const productionService = {
       const isSelling = room.roundPhase === 'SELLING' && Date.now() < (room.sellingEndsAt || 0);
       if (!isDecision && !isSelling) throw new Error('PRICE_UPDATE_CLOSED');
       const prediction = plan.pricePrediction || 'SAME';
-      const minimum = Math.max(100, plan.announcedPrice * (prediction === 'DOWN' ? 0.7 : prediction === 'SAME' ? 0.95 : 1));
-      const maximum = plan.announcedPrice * (prediction === 'UP' ? 1.3 : prediction === 'SAME' ? 1.05 : 1);
+      const minimum = Math.max(100, Math.round(plan.announcedPrice * (prediction === 'DOWN' ? 0.7 : prediction === 'SAME' ? 0.95 : 1)));
+      const maximum = Math.round(plan.announcedPrice * (prediction === 'UP' ? 1.3 : prediction === 'SAME' ? 1.05 : 1));
       if (nextPrice < minimum || nextPrice > maximum) throw new Error('PRICE_OUT_OF_RANGE');
       transaction.update(planRef, { askingPrice: Math.round(nextPrice), updatedAt: Date.now() });
     });
@@ -690,7 +690,10 @@ export const productionService = {
       const isDecision = room.roundPhase === 'DECISION';
       const isSelling = room.roundPhase === 'SELLING' && Date.now() < (room.sellingEndsAt || 0);
       if (!isDecision && !isSelling) throw new Error('OFFERED_QUANTITY_UPDATE_CLOSED');
-      if (nextQuantity > plan.producedQuantity) throw new Error('OFFERED_QUANTITY_EXCEEDED');
+      const inventoryRef = doc(db, 'rooms', roomId, 'companies', companyId, 'inventory', plan.productId);
+      const inventorySnapshot = await transaction.get(inventoryRef);
+      const availableQuantity = inventorySnapshot.exists() ? (inventorySnapshot.data() as InventoryItem).quantity : plan.producedQuantity;
+      if (nextQuantity > availableQuantity) throw new Error('OFFERED_QUANTITY_EXCEEDED');
       transaction.update(planRef, { offeredQuantity: nextQuantity, updatedAt: Date.now() });
     });
   },

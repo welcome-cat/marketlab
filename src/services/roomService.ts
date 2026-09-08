@@ -86,7 +86,9 @@ export const normalizeRoom = (roomId: string, data: Partial<Room>): Room => ({
       publicPriceRound: storedMarket?.publicPriceRound ?? 0,
       materialCostMultiplier: hasActiveSupplyState && !isLegacyRiceEconomy ? storedMarket.materialCostMultiplier : defaultMarket.materialCostMultiplier,
       wagePerWorker: hasActiveSupplyState && !isLegacyRiceEconomy ? storedMarket.wagePerWorker : defaultMarket.wagePerWorker,
-      firstWorkerProductivity: hasActiveSupplyState && !isLegacyRiceUnit ? storedMarket.firstWorkerProductivity : defaultMarket.firstWorkerProductivity,
+      firstWorkerProductivity: hasActiveSupplyState && !isLegacyRiceUnit
+        ? storedMarket.firstWorkerProductivity * (defaultMarket.id === 'market_toy' && storedMarket.riceBalanceVersion !== 2 ? 65 / 90 : 1)
+        : defaultMarket.firstWorkerProductivity,
       supplyShiftMultiplier: hasActiveSupplyState ? storedMarket.supplyShiftMultiplier : 1,
       studentSupplyWeight: storedMarket?.studentSupplyWeight ?? 1,
       demandEventEffectScale: storedMarket?.demandEventEffectScale ?? 1,
