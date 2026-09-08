@@ -31,6 +31,14 @@ export interface Market {
   productionCycleRounds: number;
   riceBalanceVersion?: number;
   riceMachineProductivityBoost?: number;
+  materialEfficiencyRate?: number;
+  ecoMaterialRate?: number;
+  workerTrainingRate?: number;
+  advancedEquipmentRate?: number;
+  machineProductivityBoost?: number;
+  differentiatedDemand?: boolean;
+  entryDemandGrowth?: number;
+  smartphoneBalanceVersion?: number;
   landCapacityPerCycle?: number;
   maxMachines: number;
   supplyShiftMultiplier: number;
@@ -129,9 +137,9 @@ export const DEMAND_EVENT_OPTIONS: DemandEventOption[] = [
 // 한 룸에 아래 세 시장이 동시에 열린다. 가격은 학생에게 공개되는 기준 시장가격이다.
 export const MARKETS: Market[] = [
   { id: 'market_tumbler', name: '카페 음료 시장', description: '대체재가 많아 가격 변화에 수요가 민감한 대규모 가격수용 시장입니다.', icon: '☕', announcedPrice: 900, basePrice: 900, demandAtBasePrice: 180000, materialCostMultiplier: 0.58, marketType: 'PERFECT_COMPETITION', priceControl: 'MARKET_PRICE', wagePerWorker: 1500, machinePrice: 9000, rentPerRound: 3500, materialUnitCost: 1000, firstWorkerProductivity: 55, productivityDecline: 4, initialSetupCost: 5000, researchCost: 2500, priceElasticity: 1.3, competitionSensitivity: 0, studentSupplyWeight: 1, demandEventEffectScale: 1, supplyEventEffectScale: 1, supplyElasticity: 0.8, laborDecayRate: 0.82, productionCycleRounds: 1, maxMachines: 10, supplyShiftMultiplier: 1, producerTaxPerUnit: 0, producerSubsidyPerUnit: 0, disasterLossRate: 0 },
-  { id: 'market_toy', name: '쌀 시장', description: '노동·기계 생산능력에 따라 매 라운드 재배·수확·판매하는 비탄력적 농산물 시장입니다.', icon: '🌾', announcedPrice: 500, basePrice: 500, demandAtBasePrice: 900000, materialCostMultiplier: 0.78, marketType: 'PERFECT_COMPETITION', priceControl: 'MARKET_PRICE', wagePerWorker: 2200, machinePrice: 30000, rentPerRound: 4000, materialUnitCost: 180, firstWorkerProductivity: 65, productivityDecline: 12, initialSetupCost: 8000, researchCost: 6500, priceElasticity: 0.4, competitionSensitivity: 0, studentSupplyWeight: 1, demandEventEffectScale: 1, supplyEventEffectScale: 1, supplyElasticity: 0.5, laborDecayRate: 0.88, productionCycleRounds: 1, riceBalanceVersion: 2, landCapacityPerCycle: 0, riceMachineProductivityBoost: 0, maxMachines: 10, supplyShiftMultiplier: 1, producerTaxPerUnit: 0, producerSubsidyPerUnit: 0, disasterLossRate: 0 },
-  { id: 'market_shoes', name: '운동화 시장', description: '설비·숙련·재료 관리가 고르게 필요해 기업의 생산방식에 따라 비교우위가 달라지는 경쟁시장입니다.', icon: '👟', announcedPrice: 3200, basePrice: 3200, demandAtBasePrice: 120000, materialCostMultiplier: 1.14, marketType: 'PERFECT_COMPETITION', priceControl: 'MARKET_PRICE', wagePerWorker: 2600, machinePrice: 22000, rentPerRound: 7000, materialUnitCost: 2300, firstWorkerProductivity: 32, productivityDecline: 4, initialSetupCost: 12000, researchCost: 5000, priceElasticity: 1.05, competitionSensitivity: 0, studentSupplyWeight: 1, demandEventEffectScale: 1, supplyEventEffectScale: 1, supplyElasticity: 0.65, laborDecayRate: 0.84, productionCycleRounds: 1, maxMachines: 10, supplyShiftMultiplier: 1, producerTaxPerUnit: 0, producerSubsidyPerUnit: 0, disasterLossRate: 0 },
-  { id: 'market_smartphone', name: '스마트폰 시장', description: '고가의 부품·설비와 고임금이 필요한 고위험·고수익 과점시장입니다.', icon: '📱', announcedPrice: 10000, basePrice: 10000, demandAtBasePrice: 70, materialCostMultiplier: 2.1, marketType: 'OLIGOPOLY', priceControl: 'FIRM_PRICE', wagePerWorker: 6500, machinePrice: 65000, rentPerRound: 16000, materialUnitCost: 2860, firstWorkerProductivity: 18, productivityDecline: 7, initialSetupCost: 45000, researchCost: 14000, priceElasticity: 1.2, competitionSensitivity: 0.12, studentSupplyWeight: 1, demandEventEffectScale: 1, supplyEventEffectScale: 1, supplyElasticity: 0, laborDecayRate: 0.86, productionCycleRounds: 1, maxMachines: 8, supplyShiftMultiplier: 1, producerTaxPerUnit: 0, producerSubsidyPerUnit: 0, disasterLossRate: 0 },
+  { id: 'market_toy', name: '쌀 시장', description: '노동·기계 생산능력에 따라 매 라운드 재배·수확·판매하는 비탄력적 농산물 시장입니다.', icon: '🌾', announcedPrice: 500, basePrice: 500, demandAtBasePrice: 900000, materialCostMultiplier: 0.78, marketType: 'PERFECT_COMPETITION', priceControl: 'MARKET_PRICE', wagePerWorker: 2200, machinePrice: 30000, rentPerRound: 4000, materialUnitCost: 180, firstWorkerProductivity: 65, productivityDecline: 12, initialSetupCost: 8000, researchCost: 6500, priceElasticity: 0.4, competitionSensitivity: 0, studentSupplyWeight: 1, demandEventEffectScale: 1, supplyEventEffectScale: 1, supplyElasticity: 0.5, laborDecayRate: 0.88, productionCycleRounds: 1, riceBalanceVersion: 2, workerTrainingRate: 0.07, advancedEquipmentRate: 0.18, landCapacityPerCycle: 0, riceMachineProductivityBoost: 0, maxMachines: 10, supplyShiftMultiplier: 1, producerTaxPerUnit: 0, producerSubsidyPerUnit: 0, disasterLossRate: 0 },
+  { id: 'market_shoes', name: '운동화 시장', description: '설비·숙련·재료 관리가 고르게 필요해 기업의 생산방식에 따라 비교우위가 달라지는 경쟁시장입니다.', icon: '👟', announcedPrice: 3200, basePrice: 3200, demandAtBasePrice: 120000, materialCostMultiplier: 1.14, marketType: 'PERFECT_COMPETITION', priceControl: 'MARKET_PRICE', wagePerWorker: 2600, machinePrice: 22000, rentPerRound: 7000, materialUnitCost: 2300, firstWorkerProductivity: 32, productivityDecline: 4, initialSetupCost: 12000, researchCost: 5000, materialEfficiencyRate: 0.03, advancedEquipmentRate: 0.04, ecoMaterialRate: 0.01, priceElasticity: 1.05, competitionSensitivity: 0, studentSupplyWeight: 1, demandEventEffectScale: 1, supplyEventEffectScale: 1, supplyElasticity: 0.65, laborDecayRate: 0.84, productionCycleRounds: 1, maxMachines: 10, supplyShiftMultiplier: 1, producerTaxPerUnit: 0, producerSubsidyPerUnit: 0, disasterLossRate: 0 },
+  { id: 'market_smartphone', name: '스마트폰 시장', description: '초기 생산성이 낮아 설비 투자가 필요합니다. 제품 차이와 가격에 따라 수요가 배분되며 3개사까지 시장이 확대되고 이후에는 경쟁 부담이 커집니다.', icon: '📱', announcedPrice: 10000, basePrice: 10000, demandAtBasePrice: 109, differentiatedDemand: true, entryDemandGrowth: 0.96, smartphoneBalanceVersion: 1, machineProductivityBoost: 0.2, materialCostMultiplier: 2.1, marketType: 'OLIGOPOLY', priceControl: 'FIRM_PRICE', wagePerWorker: 6500, machinePrice: 65000, rentPerRound: 16000, materialUnitCost: 2860, firstWorkerProductivity: 3, productivityDecline: 7, initialSetupCost: 45000, researchCost: 14000, priceElasticity: 1.2, competitionSensitivity: 0.12, studentSupplyWeight: 1, demandEventEffectScale: 1, supplyEventEffectScale: 1, supplyElasticity: 0, laborDecayRate: 0.86, productionCycleRounds: 1, maxMachines: 8, supplyShiftMultiplier: 1, producerTaxPerUnit: 0, producerSubsidyPerUnit: 0, disasterLossRate: 0 },
 ];
 
 export interface Room {
@@ -251,6 +259,13 @@ export interface Company {
 export type UpgradeType = 'advancedEquipment' | 'workerTraining' | 'materialEfficiency' | 'ecoProduction';
 export interface CompanyUpgrades { advancedEquipment: number; workerTraining: number; materialEfficiency: number; ecoProduction: number; }
 export const EMPTY_UPGRADES: CompanyUpgrades = { advancedEquipment: 0, workerTraining: 0, materialEfficiency: 0, ecoProduction: 0 };
+export const getUpgradeDescription = (market: Market, type: UpgradeType): string => {
+  const pct = (rate: number) => Number((rate * 100).toFixed(2));
+  if (type === 'advancedEquipment') return `단계마다 추가 기계의 한계생산 체감 완화 효과가 ${pct(market.advancedEquipmentRate ?? 0.12)}% 커집니다.`;
+  if (type === 'workerTraining') return `단계마다 노동자의 기본 생산성이 ${pct(market.workerTrainingRate ?? 0.06)}% 높아집니다. 한계생산 체감 속도는 바꾸지 않습니다.`;
+  if (type === 'materialEfficiency') return `단계마다 현재 재료비를 ${pct(market.materialEfficiencyRate ?? 0.05)}% 줄입니다.`;
+  return `단계마다 현재 재료비를 ${pct(market.ecoMaterialRate ?? 0.02)}% 줄이고, 친환경 선호 사건에서 수요 배분에 유리해집니다.`;
+};
 export const UPGRADE_OPTIONS: Array<{ id: UpgradeType; name: string; icon: string; description: string }> = [
   { id: 'advancedEquipment', name: '고급 설비', icon: '⚙️', description: '기존 기계 수는 그대로이며, 추가 기계가 한계생산 체감을 완화하는 효과가 단계마다 12% 커집니다.' },
   { id: 'workerTraining', name: '노동자 훈련', icon: '🎓', description: '단계마다 노동자의 기본 생산성이 6% 높아집니다. 기계처럼 한계생산 체감 속도를 바꾸지는 않습니다.' },

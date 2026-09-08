@@ -258,10 +258,10 @@ input[type='range']::-moz-range-thumb:hover {
 .student-reflection-shell > section { width: 100%; }
 
 /* 시장 선택 직후 진단서를 확인하고, 핵심 의사결정은 같은 행끼리 비교한다. */
-.student-market { order: 1; }
+.student-market { order: 2; }
 .student-diagnosis {
   grid-column: 1 / -1;
-  order: 2;
+  order: 1;
 }
 .student-decision-columns {
   grid-column: 1 / -1;

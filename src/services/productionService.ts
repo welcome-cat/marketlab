@@ -45,15 +45,15 @@ export const calculateWorkerMarginalProduct = (
   const profile = company.productionProfile;
   const marketFit = market ? getTechnologyMarketFit(company, market) : { productivity: 1 };
   const upgrades = { ...EMPTY_UPGRADES, ...(company.upgrades || {}) };
-  const technologyAdjustedBase = (market?.firstWorkerProductivity ?? profile.firstWorkerProductivity) * marketFit.productivity * (1 + technologyLevel * profile.technologyBoostRate) * (1 + upgrades.workerTraining * 0.06);
+  const technologyAdjustedBase = (market?.firstWorkerProductivity ?? profile.firstWorkerProductivity) * marketFit.productivity * (1 + technologyLevel * profile.technologyBoostRate) * (1 + upgrades.workerTraining * (market?.workerTrainingRate ?? 0.06));
   if (!market) {
     const fallback = technologyAdjustedBase - profile.productivityDecline * Math.floor((workerNumber - 1) / Math.max(1, machineCount));
     return Math.max(0, Math.round(fallback));
   }
   const machines = Math.max(1, machineCount);
-  const effectiveMachines = 1 + Math.max(0, machines - 1) * (1 + upgrades.advancedEquipment * 0.12);
+  const effectiveMachines = 1 + Math.max(0, machines - 1) * (1 + upgrades.advancedEquipment * (market.advancedEquipmentRate ?? 0.12));
   const isRice = market.id === 'market_toy';
-  const productivityBase = isRice ? technologyAdjustedBase * (1 + (machines - 1) * (market.riceMachineProductivityBoost ?? 0.12)) : technologyAdjustedBase;
+  const productivityBase = technologyAdjustedBase * (1 + (machines - 1) * (isRice ? market.riceMachineProductivityBoost ?? 0.12 : market.machineProductivityBoost ?? 0));
   // 지수식은 기계가 많을 때 체감이 거의 사라졌다가 노동자가 늘면 급락했다.
   // 완만한 1차항과 점차 커지는 2차항을 함께 사용해 P=MC 교차점이 선택 범위 안에 오게 한다.
   const machineCongestionRelief = 1 + 0.2 * Math.max(0, effectiveMachines - 1);
@@ -88,7 +88,7 @@ export const calculateFirmSupplyCurve = (
   technologyLevel: number,
 ) => {
   const upgrades = { ...EMPTY_UPGRADES, ...(company.upgrades || {}) };
-  const unitMaterialCost = Math.round(market.materialUnitCost * market.materialCostMultiplier * getTechnologyMarketFit(company, market).material * Math.pow(0.95, upgrades.materialEfficiency) * Math.pow(0.98, upgrades.ecoProduction));
+  const unitMaterialCost = Math.round(market.materialUnitCost * market.materialCostMultiplier * getTechnologyMarketFit(company, market).material * Math.pow(1 - (market.materialEfficiencyRate ?? 0.05), upgrades.materialEfficiency) * Math.pow(1 - (market.ecoMaterialRate ?? 0.02), upgrades.ecoProduction));
   const unitPolicyCost = (market.producerTaxPerUnit || 0) - (market.producerSubsidyPerUnit || 0);
   let cumulativeQuantity = 0;
   return Array.from({ length: workerCount }, (_, index) => {
@@ -210,7 +210,7 @@ export const calculateProductionQuote = (
   const nextMarginalProduct = calculateWorkerMarginalProduct(upgradedCompany, workerCount + 1, machineCountAfter, technologyLevelAfter, market);
   const rentCost = calculateFacilityRent(market, machineCountAfter);
   const wageCost = market.wagePerWorker * workerCount;
-  const unitMaterialCost = Math.round(market.materialUnitCost * market.materialCostMultiplier * getTechnologyMarketFit(upgradedCompany, market).material * Math.pow(0.95, upgradesAfter.materialEfficiency) * Math.pow(0.98, upgradesAfter.ecoProduction));
+  const unitMaterialCost = Math.round(market.materialUnitCost * market.materialCostMultiplier * getTechnologyMarketFit(upgradedCompany, market).material * Math.pow(1 - (market.materialEfficiencyRate ?? 0.05), upgradesAfter.materialEfficiency) * Math.pow(1 - (market.ecoMaterialRate ?? 0.02), upgradesAfter.ecoProduction));
   const materialCost = unitMaterialCost * requestedQuantity;
   const policyCost = ((market.producerTaxPerUnit || 0) - (market.producerSubsidyPerUnit || 0)) * requestedQuantity;
   const productionCost = rentCost + wageCost + materialCost + policyCost;
@@ -425,9 +425,17 @@ export const calculateMarketClearing = (market: Market, plans: ProductionPlan[],
   let demandQuantity = calculateMarketDemand(market, marketPrice, demandMultiplier);
   if (market.marketType === 'OLIGOPOLY') {
     const competitionMultiplier = demandMultiplier / (1 + market.competitionSensitivity * Math.max(0, participantCount - 1));
-    const allocations = matchCheapestOffers(offers, (price) => calculateMarketDemand(market, price, competitionMultiplier), ecoPreferenceBoost);
+    // Differentiated smartphone products: price affects both willingness to buy and market share.
+    // Market reach expands up to three firms; subsequent entry only intensifies competition.
+    const reach = 1 + (market.entryDemandGrowth ?? 0) * Math.min(2, Math.max(0, participantCount - 1));
+    const weights = offers.map(plan => Math.exp(-2 * (plan.askingPrice || market.announcedPrice) / market.basePrice) * (1 + (plan.upgradesAfter?.ecoProduction || 0) * ecoPreferenceBoost));
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    const allocations = market.differentiatedDemand
+      ? new Map(offers.map((plan, index) => [plan.id, Math.min(plan.offeredQuantity ?? plan.producedQuantity,
+        Math.floor(calculateMarketDemand(market, plan.askingPrice || market.announcedPrice, competitionMultiplier * reach) * weights[index] / Math.max(Number.MIN_VALUE, totalWeight)))]))
+      : matchCheapestOffers(offers, (price) => calculateMarketDemand(market, price, competitionMultiplier), ecoPreferenceBoost);
     allocations.forEach((quantity, planId) => soldByPlan.set(planId, quantity));
-    demandQuantity = calculateMarketDemand(market, market.basePrice, competitionMultiplier);
+    demandQuantity = calculateMarketDemand(market, market.basePrice, competitionMultiplier * reach);
     const matchedValue = offers.reduce((sum, plan) => sum + (soldByPlan.get(plan.id) || 0) * (plan.askingPrice || market.announcedPrice), 0);
     const matchedUnits = [...soldByPlan.values()].reduce((sum, quantity) => sum + quantity, 0);
     marketPrice = matchedUnits > 0 ? Math.round(matchedValue / matchedUnits) : market.announcedPrice;

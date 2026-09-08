@@ -4,10 +4,11 @@ import { FirmSupplyCurve } from '../components/FirmSupplyCurve';
 import { ConceptHelp } from '../components/ConceptHelp';
 import { StudentRosterEditor } from '../components/StudentRosterEditor';
 import { TouchStepper } from '../components/TouchStepper';
+import { StudentTutorial } from '../components/StudentTutorial';
 import { PriceButtons } from '../components/PriceButtons';
 import { calculateLoanTerms, calculateMachineRepairCost, calculateMarketClearing, calculateMinimumWorkerCount, calculateProductionQuote, companyService, getTechnologyMarketFit, machineDepreciationRate, productionService, reflectionService, roomService, scaleMarketEventFactor } from '../services';
 import type { Company, InventoryItem, LearningReflection, Market, ProductionPlan, Room, UnlockRounds, UpgradeType } from '../types/domain';
-import { DEFAULT_REFLECTION_SHEETS, EVENT_INTENSITY_SCALE, INDUSTRY_TRAITS, INITIAL_COMPANY_CASH, UPGRADE_OPTIONS } from '../types/domain';
+import { DEFAULT_REFLECTION_SHEETS, EVENT_INTENSITY_SCALE, INDUSTRY_TRAITS, INITIAL_COMPANY_CASH, getUpgradeDescription, UPGRADE_OPTIONS } from '../types/domain';
 
 const STUDENT_SESSION_KEY = 'marketlab:student-session';
 const saveSession = (roomId: string, companyName: string) => {
@@ -304,7 +305,6 @@ export const StudentPage: React.FC = () => {
   const expectedRevenue = effectivePrice * desiredOfferedQuantity;
   const selectedMarketParticipants = new Set(marketPlans.filter((item) => item.productId === selectedMarket.id).map((item) => item.companyId)).size;
   const expectedOperatingProfit = expectedRevenue - quote.productionCost;
-  const expectedEconomicProfit = expectedRevenue - quote.economicCost;
   const expectedCashFlow = expectedRevenue + quote.machineResaleRevenue - quote.totalCost;
   const isRunning = room.status === 'RUNNING';
   const isDecision = isRunning && room.roundPhase === 'DECISION';
@@ -619,7 +619,7 @@ export const StudentPage: React.FC = () => {
     )}
     <main className="student-dashboard">
     <section className="student-company" style={card}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}><div><small style={{ color: '#64748b' }}>룸 {room.id} · {room.title}</small><h1 style={{ margin: '3px 0' }}>🏢 {company.name}</h1></div><div style={{ display: 'flex', gap: '7px' }}><button type="button" onClick={() => setRosterOpen(true)} style={{ height: '34px' }}>👥 회사 인원 보기</button><button onClick={logout} style={{ height: '34px' }}>로그아웃</button></div></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}><div><small style={{ color: '#64748b' }}>룸 {room.id} · {room.title}</small><h1 style={{ margin: '3px 0' }}>🏢 {company.name}</h1></div><div style={{ display: 'flex', gap: '7px' }}><StudentTutorial /><button type="button" onClick={() => setRosterOpen(true)} style={{ height: '34px' }}>👥 회사 인원 보기</button><button onClick={logout} style={{ height: '34px' }}>로그아웃</button></div></div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', marginTop: '14px' }}>
         <div><small>보유 자본금</small><strong style={{ display: 'block', color: '#059669' }}>{company.cash.toLocaleString()}원</strong></div>
         <div><small>보유 기계</small><strong style={{ display: 'block' }}>{company.machineCount || 1}대</strong></div>
@@ -636,20 +636,6 @@ export const StudentPage: React.FC = () => {
     <details ref={newsPanelRef} className="student-news" style={{ ...card, border: '2px solid #d97706', background: '#fffbeb' }}>
       <summary style={{ cursor: 'pointer' }}><div style={{ display: 'inline-flex', width: 'calc(100% - 20px)', justifyContent: 'space-between', gap: '10px', alignItems: 'center', verticalAlign: 'middle' }}><div><small style={{ color: '#92400e', fontWeight: 900 }}>MARKETLAB ECONOMY</small><h2 style={{ margin: '3px 0', fontFamily: 'Georgia, serif' }}>📰 Round {newspaperRound} 시장 신문</h2></div><span style={{ color: '#92400e', fontSize: '12px' }}>눌러서 기사 확대·축소</span></div></summary>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: '12px', marginTop: '13px' }}>{newspaperEvents.map((event) => { const market = room.markets.find((item) => item.id === event.marketId); return <article key={event.marketId} style={{ padding: '15px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: '10px' }}><small style={{ color: '#64748b', fontWeight: 800 }}>{market?.icon} {market?.name}</small><section className="news-section"><b>🛒 소비자 리포트</b><h3 style={{ margin: '7px 0', fontSize: '17px', fontFamily: 'Georgia, serif' }}>{event.articleHeadline}</h3><p style={{ margin: 0, lineHeight: 1.65, color: '#334155', fontSize: '13px' }}>{event.articleBody}</p></section><section className="news-section"><b>🏭 생산 동향</b><h3 style={{ margin: '7px 0', fontSize: '17px', fontFamily: 'Georgia, serif' }}>{event.supplyArticleHeadline || `${market?.name || '시장'} 생산 현장, 평소 흐름 이어져`}</h3><p style={{ margin: 0, lineHeight: 1.65, color: '#334155', fontSize: '13px' }}>{event.supplyArticleBody || event.supplyDescription || '생산과 출하 현장에서는 뚜렷한 변화가 관찰되지 않고 있다.'}</p></section></article>; })}</div>
-    </details>
-
-    <details ref={marketPanelRef} className="student-market" style={card}><summary style={{ cursor: 'pointer' }}><h2 style={{ display: 'inline', margin: 0, fontSize: '18px' }}>어떤 시장에 뛰어들 것인가?</h2><small style={{ marginLeft: '9px', color: '#64748b' }}>눌러서 확대·축소</small></summary>
-      <p style={{ color: '#64748b', fontSize: '13px' }}>카페·쌀(1포대=10kg)·운동화는 시장거래가격을 기준으로 경쟁합니다. 스마트폰은 가격과 생산량을 직접 결정하는 도전시장입니다.</p>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: '10px' }}>{room.markets.map((market) => {
-        const chosen = selectedMarket.id === market.id;
-        const visiblePrice = getPublicMarketPrice(market);
-        const visiblePriceLabel = room.currentRound === 1 || !market.publicPriceRound ? '초기 기준가격' : `Round ${market.publicPriceRound} 거래가격`;
-        return <button type="button" key={market.id} disabled={!canChooseMarket} onClick={() => { setSelectedMarketId(market.id); setAskingPrice(visiblePrice); }} style={{ textAlign: 'left', padding: '14px', borderRadius: '11px', border: chosen ? '2px solid #2563eb' : '1px solid #e2e8f0', background: chosen ? '#eff6ff' : '#fff', cursor: canChooseMarket ? 'pointer' : 'not-allowed' }}>
-          <span style={{ fontSize: '25px' }}>{market.icon}</span><strong style={{ display: 'block' }}>{market.name}</strong><b style={{ color: '#dc2626' }}>{visiblePriceLabel} {visiblePrice.toLocaleString()}원</b><small style={{ display: 'block', color: '#475569', marginTop: '4px', fontWeight: 700 }}>우리 기업의 제품 1개당 재료비 {Math.round(market.materialUnitCost * market.materialCostMultiplier * getTechnologyMarketFit(company, market).material).toLocaleString()}원</small>
-        </button>;
-      })}</div>
-      {company.currentMarketId && company.currentMarketId !== selectedMarket.id && <div style={{ marginTop: '12px', padding: '12px', background: '#fef2f2', borderRadius: '10px', color: '#991b1b' }}><strong>기존 시장 퇴거 정산 필요</strong><p style={{ margin: '5px 0', fontSize: '12px' }}>기존 시장의 전용 기계와 재고를 정산한 뒤 새 시장에 진입합니다.</p><button type="button" onClick={settleMarketExit} disabled={submitting}>기존 시장 퇴거·자산 정산</button></div>}
-      {company.traitsConfirmed && <div style={{ marginTop: '12px', padding: '12px', background: '#fff7ed', borderRadius: '10px' }}><strong>신규 시장 진입 준비</strong><p style={{ margin: '5px 0', fontSize: '12px', color: '#9a3412' }}>기존 업종 경험을 유지하면 무료입니다. 다른 비교우위를 원하면 전문인력 영입·교육비 15,000원을 내고 경험을 교체할 수 있습니다.</p><div style={{ display: 'flex', gap: '8px' }}><select value={industryTraitId} onChange={(event) => setIndustryTraitId(event.target.value)} style={{ flex: 1 }}>{INDUSTRY_TRAITS.map((trait) => <option key={trait.id} value={trait.id}>{trait.icon} {trait.name}</option>)}</select><button type="button" disabled={submitting || industryTraitId === company.industryTraitId} onClick={purchaseIndustryChange}>15,000원 내고 변경</button></div></div>}
     </details>
 
     <details ref={diagnosisPanelRef} className="student-diagnosis" style={{ ...card, border: '2px solid #0f766e', background: '#f0fdfa', gridColumn: '1 / -1' }}>
@@ -675,6 +661,20 @@ export const StudentPage: React.FC = () => {
         })}</div>
         <p style={{ marginBottom: 0, fontSize: '12px', color: '#64748b' }}>모든 시장을 동일한 3라운드 기간으로 비교합니다. 모든 시장이 매 라운드 생산·판매하고 매출을 회수합니다. 모의 이윤은 전량 판매 가정이며 실제 수요·경쟁·미판매 결과에 따라 달라질 수 있습니다.</p>
       </div>}
+    </details>
+
+    <details ref={marketPanelRef} className="student-market" style={card}><summary style={{ cursor: 'pointer' }}><h2 style={{ display: 'inline', margin: 0, fontSize: '18px' }}>어떤 시장에 뛰어들 것인가?</h2><small style={{ marginLeft: '9px', color: '#64748b' }}>눌러서 확대·축소</small></summary>
+      <p style={{ color: '#64748b', fontSize: '13px' }}>카페·쌀(1포대=10kg)·운동화는 시장거래가격을 기준으로 경쟁합니다. 스마트폰은 가격과 생산량을 직접 결정하는 도전시장입니다.</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: '10px' }}>{room.markets.map((market) => {
+        const chosen = selectedMarket.id === market.id;
+        const visiblePrice = getPublicMarketPrice(market);
+        const visiblePriceLabel = room.currentRound === 1 || !market.publicPriceRound ? '초기 기준가격' : `Round ${market.publicPriceRound} 거래가격`;
+        return <button type="button" key={market.id} disabled={!canChooseMarket} onClick={() => { setSelectedMarketId(market.id); setAskingPrice(visiblePrice); }} style={{ textAlign: 'left', padding: '14px', borderRadius: '11px', border: chosen ? '2px solid #2563eb' : '1px solid #e2e8f0', background: chosen ? '#eff6ff' : '#fff', cursor: canChooseMarket ? 'pointer' : 'not-allowed' }}>
+          <span style={{ fontSize: '25px' }}>{market.icon}</span><strong style={{ display: 'block' }}>{market.name}</strong><b style={{ color: '#dc2626' }}>{visiblePriceLabel} {visiblePrice.toLocaleString()}원</b><small style={{ display: 'block', color: '#475569', marginTop: '4px', fontWeight: 700 }}>우리 기업의 제품 1개당 재료비 {Math.round(market.materialUnitCost * market.materialCostMultiplier * getTechnologyMarketFit(company, market).material).toLocaleString()}원</small>
+        </button>;
+      })}</div>
+      {company.currentMarketId && company.currentMarketId !== selectedMarket.id && <div style={{ marginTop: '12px', padding: '12px', background: '#fef2f2', borderRadius: '10px', color: '#991b1b' }}><strong>기존 시장 퇴거 정산 필요</strong><p style={{ margin: '5px 0', fontSize: '12px' }}>기존 시장의 전용 기계와 재고를 정산한 뒤 새 시장에 진입합니다.</p><button type="button" onClick={settleMarketExit} disabled={submitting}>기존 시장 퇴거·자산 정산</button></div>}
+      {company.traitsConfirmed && <div style={{ marginTop: '12px', padding: '12px', background: '#fff7ed', borderRadius: '10px' }}><strong>신규 시장 진입 준비</strong><p style={{ margin: '5px 0', fontSize: '12px', color: '#9a3412' }}>기존 업종 경험을 유지하면 무료입니다. 다른 비교우위를 원하면 전문인력 영입·교육비 15,000원을 내고 경험을 교체할 수 있습니다.</p><div style={{ display: 'flex', gap: '8px' }}><select value={industryTraitId} onChange={(event) => setIndustryTraitId(event.target.value)} style={{ flex: 1 }}>{INDUSTRY_TRAITS.map((trait) => <option key={trait.id} value={trait.id}>{trait.icon} {trait.name}</option>)}</select><button type="button" disabled={submitting || industryTraitId === company.industryTraitId} onClick={purchaseIndustryChange}>15,000원 내고 변경</button></div></div>}
     </details>
 
     <div className="student-decision-columns">
@@ -719,7 +719,7 @@ export const StudentPage: React.FC = () => {
           description={`수리 가능 ${repairableMachines}대 · 감가율에 비례한 수리비 ${calculateMachineRepairCost(company, selectedMarket.id, machineRepairs, room.currentRound).toLocaleString()}원`}
         />
       </div>
-      <div style={{ marginTop: '12px' }}><strong>기업 업그레이드 — 한 라운드에 1개</strong><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: '9px', marginTop: '8px' }}>{UPGRADE_OPTIONS.map((option) => { const unlockRound = room.unlockRounds[option.id]; const level = company.upgrades?.[option.id] || 0; const locked = room.currentRound < unlockRound; return <button type="button" key={option.id} disabled={Boolean(plan) || locked || level >= 3} onClick={() => setUpgradePurchase((current) => current === option.id ? null : option.id)} style={{ textAlign: 'left', padding: '12px', borderRadius: '10px', border: upgradePurchase === option.id ? '2px solid #0f766e' : '1px solid #cbd5e1', background: upgradePurchase === option.id ? '#f0fdfa' : '#fff' }}><strong>{option.icon} {option.name} Lv.{level}/3</strong><small style={{ display: 'block', marginTop: '5px', color: '#475569' }}>{option.description}</small><b style={{ display: 'block', marginTop: '6px', color: locked ? '#b45309' : '#0f766e' }}>{locked ? `🔒 Round ${unlockRound} 해금` : level >= 3 ? '최대 단계' : upgradePurchase === option.id ? `선택됨 · 투자비 ${quote.upgradeCost.toLocaleString()}원` : '선택하여 효과·비용 확인'}</b></button>; })}</div></div>
+      <div style={{ marginTop: '12px' }}><strong>기업 업그레이드 — 한 라운드에 1개</strong><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: '9px', marginTop: '8px' }}>{UPGRADE_OPTIONS.map((option) => { const unlockRound = room.unlockRounds[option.id]; const level = company.upgrades?.[option.id] || 0; const locked = room.currentRound < unlockRound; return <button type="button" key={option.id} disabled={Boolean(plan) || locked || level >= 3} onClick={() => setUpgradePurchase((current) => current === option.id ? null : option.id)} style={{ textAlign: 'left', padding: '12px', borderRadius: '10px', border: upgradePurchase === option.id ? '2px solid #0f766e' : '1px solid #cbd5e1', background: upgradePurchase === option.id ? '#f0fdfa' : '#fff' }}><strong>{option.icon} {option.name} Lv.{level}/3</strong><small style={{ display: 'block', marginTop: '5px', color: '#475569' }}>{getUpgradeDescription(selectedMarket, option.id)}</small><b style={{ display: 'block', marginTop: '6px', color: locked ? '#b45309' : '#0f766e' }}>{locked ? `🔒 Round ${unlockRound} 해금` : level >= 3 ? '최대 단계' : upgradePurchase === option.id ? `선택됨 · 투자비 ${quote.upgradeCost.toLocaleString()}원` : '선택하여 효과·비용 확인'}</b></button>; })}</div></div>
       <p style={{ fontSize: '13px', color: '#475569' }}>선택한 투자는 이번 생산계획부터 적용되고 이후 라운드에도 유지됩니다. 고급 설비는 기계가 여러 대일수록 효과가 커집니다.</p>
     </section>
 
@@ -761,7 +761,7 @@ export const StudentPage: React.FC = () => {
             </div>
           </div>
           <div style={{ marginTop: '10px', padding: '12px', background: '#f8fafc', borderRadius: '10px' }}>
-            <div className="curve-toggle-actions"><button type="button" onClick={() => setShowSupplyCurve((value) => !value)} aria-pressed={showSupplyCurve}>{showSupplyCurve ? '📉 공급곡선 숨기기' : '📈 공급곡선 전체보기'}</button><button type="button" onClick={() => setShowProducerSurplus((value) => !value)} aria-pressed={showProducerSurplus}>{showProducerSurplus ? '💰 1개당 판매 이윤 숨기기' : '💰 1개당 판매 이윤 보기'}</button></div>
+            <div className="curve-toggle-actions"><button type="button" onClick={() => setShowSupplyCurve((value) => !value)} aria-pressed={showSupplyCurve}>{showSupplyCurve ? '📉 한계비용 곡선 숨기기' : '📈 한계비용 곡선보기'}</button><button type="button" onClick={() => setShowProducerSurplus((value) => !value)} aria-pressed={showProducerSurplus}>{showProducerSurplus ? '💰 1개당 판매 이윤 숨기기' : '💰 1개당 판매 이윤 보기'}</button></div>
             <FirmSupplyCurve points={effectiveSupplyCurve} selectedQuantity={effectiveProductionQty} selectedMarginalCost={effectiveMarginalCost} quantityUnit={quantityUnit} marketPrice={publicReferencePrice} marketPriceLabel={room.currentRound === 1 ? '초기 기준가격' : '이전 라운드 거래가격'} showCurve={showSupplyCurve} showSurplus={showProducerSurplus} />
           </div>
           {!plan && plannedProductionQty > cashLimitedCapacity && <p style={{ color: '#dc2626', fontSize: '13px' }}>⚠️ 현재 선택은 보유현금을 초과합니다. 희망 공급량을 현금 한도 안으로 낮춰주세요.</p>}
@@ -887,7 +887,7 @@ export const StudentPage: React.FC = () => {
     <section className="student-inventory" style={card}><h2 style={{ marginTop: 0, fontSize: '18px' }}>{isRiceMarket && !isRiceHarvestRound ? '재배 중인 생산물' : '판매 후 남은 재고'}</h2><div style={{ display: 'flex', justifyContent: 'space-between' }}><strong>{selectedMarket.icon} {selectedMarket.name}</strong><span><b>{inventory?.quantity || 0}{quantityUnit}</b> · 평균원가 {(inventory?.averageUnitCost || 0).toLocaleString()}원</span></div></section>
     </div>
 
-    <section className="student-cost" style={card}><h2 style={{ marginTop: 0, fontSize: '18px' }}>비용과 예상 결과</h2>
+    <section className="student-cost" style={card}><h2 style={{ marginTop: 0, fontSize: '18px' }}>비용</h2>
       <div style={{ display: 'grid', gap: '7px', fontSize: '14px' }}>
         <span>{isRiceMarket ? '농지 이용료(고정비)' : '임대료(고정비)'}<ConceptHelp concept="고정비" /> <b style={{ float: 'right' }}>{(plan?.rentCost ?? quote.rentCost).toLocaleString()}원</b></span>
         <span>총임금 <b style={{ float: 'right' }}>{(plan?.wageCost ?? quote.wageCost).toLocaleString()}원</b></span>
@@ -903,13 +903,15 @@ export const StudentPage: React.FC = () => {
         <span style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px' }}>순 현금지출 <b style={{ float: 'right', color: '#dc2626' }}>{plan ? Math.max(0, (plan.openingCash - company.cash)).toLocaleString() : quote.netCashCost.toLocaleString()}원</b></span>
         <span>지출 가능 한도(보유 자본금의 100%) <b style={{ float: 'right' }}>{(plan?.spendingLimit ?? quote.spendingLimit).toLocaleString()}원</b></span>
         <span>평균비용<ConceptHelp concept="평균비용" /> / 한계비용<ConceptHelp concept="한계비용" /> <b style={{ float: 'right', color: '#7c3aed' }}>{plan ? (plan.producedQuantity > 0 ? Math.round((plan.productionCost + (plan.allocatedInvestmentCost || 0)) / plan.producedQuantity).toLocaleString() : '0') : quote.averageCost.toLocaleString()}원 / {marginalCostLabel}</b></span>
+      </div>
+      <h2 style={{ marginTop: '24px', fontSize: '18px', borderTop: '1px solid #e2e8f0', paddingTop: '18px' }}>매출 / 이윤</h2>
+      <p style={{ color: '#64748b', fontSize: '12px' }}>전량 판매를 가정한 예상치입니다. 실제 판매 결과에 따라 달라집니다.</p>
+      <div style={{ display: 'grid', gap: '7px', fontSize: '14px' }}>
         <span style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px' }}>{isRiceMarket && !isRiceHarvestRound ? '이번 라운드 매출(재배 중)' : '판매 대상 전부 판매 시 예상매출'} <b style={{ float: 'right', color: '#2563eb' }}>{expectedRevenue.toLocaleString()}원</b></span>
         {isRiceMarket && <span>희망가격으로 수확물 판매 시 최대 매출 <b style={{ float: 'right', color: '#2563eb' }}>{desiredOfferedQuantity.toLocaleString()}kg × {askingPrice.toLocaleString()}원 = {(desiredOfferedQuantity * askingPrice).toLocaleString()}원</b></span>}
         <span>생산 직후 {plan ? '보유 현금' : '예상 보유 현금'} <b style={{ float: 'right' }}>{company.cash.toLocaleString()}원</b></span>
         <span>전량 판매 후 예상 보유 현금 <b style={{ float: 'right', color: '#059669' }}>{(company.cash + expectedCashFlow).toLocaleString()}원</b></span>
         <span>예상 영업이익<ConceptHelp concept="영업이익" /> <b style={{ float: 'right', color: expectedOperatingProfit >= 0 ? '#059669' : '#dc2626' }}>{expectedOperatingProfit.toLocaleString()}원</b></span>
-        <span>예상 이윤<ConceptHelp concept="이윤" /> <b style={{ float: 'right', color: expectedEconomicProfit >= 0 ? '#059669' : '#dc2626' }}>{expectedEconomicProfit.toLocaleString()}원</b></span>
-        <span>예상 현금 변화 <b style={{ float: 'right', color: expectedCashFlow >= 0 ? '#059669' : '#dc2626' }}>{expectedCashFlow.toLocaleString()}원</b></span>
       </div>
       {!plan && remainingBudget < 0 && <p style={{ color: '#dc2626', fontWeight: 700 }}>지출 한도를 {Math.abs(remainingBudget).toLocaleString()}원 초과했습니다.</p>}
       <button onClick={confirmProduction} disabled={!canConfirm} style={{ width: '100%', padding: '13px', marginTop: '15px', border: 0, borderRadius: '9px', background: canConfirm ? '#2563eb' : '#cbd5e1', color: '#fff', fontWeight: 800 }}>{plan ? `Round ${plan.roundNumber} 생산 결정 완료` : !isDecision ? '기업 선택 시간이 아닙니다' : submitting ? '확정 중...' : '생산 결정 확정'}</button>
