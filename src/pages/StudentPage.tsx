@@ -619,7 +619,7 @@ export const StudentPage: React.FC = () => {
     )}
     <main className="student-dashboard">
     <section className="student-company" style={card}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}><div><small style={{ color: '#64748b' }}>룸 {room.id} · {room.title}</small><h1 style={{ margin: '3px 0' }}>🏢 {company.name}</h1></div><div style={{ display: 'flex', gap: '7px' }}><StudentTutorial /><button type="button" onClick={() => setRosterOpen(true)} style={{ height: '34px' }}>👥 회사 인원 보기</button><button onClick={logout} style={{ height: '34px' }}>로그아웃</button></div></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}><div><small style={{ color: '#64748b' }}>룸 {room.id} · {room.title}</small><h1 style={{ margin: '3px 0' }}>🏢 {company.name}</h1></div><div style={{ display: 'flex', gap: '7px' }}><StudentTutorial key={`${room.currentRound}:${room.roundPhase}`} phase={room.roundPhase} /><button type="button" onClick={() => setRosterOpen(true)} style={{ height: '34px' }}>👥 회사 인원 보기</button><button onClick={logout} style={{ height: '34px' }}>로그아웃</button></div></div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', marginTop: '14px' }}>
         <div><small>보유 자본금</small><strong style={{ display: 'block', color: '#059669' }}>{company.cash.toLocaleString()}원</strong></div>
         <div><small>보유 기계</small><strong style={{ display: 'block' }}>{company.machineCount || 1}대</strong></div>
@@ -733,7 +733,7 @@ export const StudentPage: React.FC = () => {
         </div>
       )}
       {isRiceMarket && <div style={{ marginBottom: '13px', padding: '12px', borderRadius: '10px', background: '#fef3c7', color: '#92400e' }}><strong>🌾 매 라운드 수확·판매</strong><small style={{ display: 'block' }}>1포대=10kg · 노동·기계 생산능력과 보유현금 내에서 생산 · 이전 재고와 이번 생산분을 함께 판매할 수 있습니다. 기계가 늘어나면 작업 공간과 이용 농지가 확대되어 농지 이용료가 증가합니다.</small></div>}
-      <div style={{ marginTop: '12px' }}>
+      <div data-tutorial="workers" style={{ marginTop: '12px' }}>
         <TouchStepper
           label="총 고용 노동자 수"
           value={effectiveWorkerCount}
