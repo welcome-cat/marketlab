@@ -3,6 +3,7 @@ import './StudentTutorial.css';
 
 type Step = { target: string; title: string; body: string };
 const production: Step[] = [
+  { target: '.student-company', title: '여러분은 지금부터 기업을 운영합니다', body: '시장을 선택하고 직원을 고용해 생산량을 결정하세요. 생산 확정 후 판매 단계가 열리면 상품을 판매합니다. 모두 팔리는 것은 아닙니다. 신문과 거래 결과를 보며 선택을 개선하세요. 현금과 빚은 구분하며 최종 평가는 선생님이 정합니다.' },
   { target: '.student-diagnosis > summary', title: '우리 기업 진단서', body: '업종 경험과 시장별 모의 결과를 비교하세요. 진단서의 계산은 실제 생산을 확정하지 않습니다.' },
   { target: '.student-market > div', title: '진출 시장 선택', body: '이전 거래가격과 재료비를 비교하세요. 시장 이동에는 기존 기계·재고 정산과 새 진입 비용이 생길 수 있습니다.' },
   { target: '.student-news > div article', title: '신문에서 단서 찾기', body: '소비자 리포트와 생산 동향을 나누어 읽으세요. 이전 거래가격은 이번 판매가격을 보장하지 않습니다.' },
@@ -65,7 +66,7 @@ export function StudentTutorial({ phase }: { phase: string }) {
   const stop = () => { dialog.current?.close(); setSteps([]); setIndex(0); };
   const start = () => {
     const candidates = phase === 'SELLING' ? selling : phase === 'RESULT' ? results : production;
-    const available = candidates.filter(step => document.querySelector(step.target));
+    const available = candidates.filter(step => (() => { const el = document.querySelector<HTMLElement>(step.target); return el && !el.closest('[style*="display: none"]'); })());
     setSteps(available.length ? available : [{ target: '.student-round', title: '현재 라운드 안내', body: '교사의 다음 진행을 기다려주세요. 단계가 바뀌면 안내를 다시 열 수 있습니다.' }]);
     setIndex(0);
   };

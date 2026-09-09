@@ -1,5 +1,6 @@
 import { collection, doc, getDoc, getDocs, onSnapshot, runTransaction, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import type { DocumentData, DocumentReference, QueryDocumentSnapshot, QuerySnapshot, Unsubscribe } from 'firebase/firestore';
+import { calculateCompetitiveMarket } from './productionService';
 import { db } from './firebase/config';
 import type { DemandEvent, EconomicsQuiz, Market, ReflectionSheet, Room } from '../types/domain';
 import { DEFAULT_ECONOMICS_QUIZZES, DEFAULT_REFLECTION_SHEETS, DEFAULT_UNLOCK_ROUNDS, DEMAND_EVENT_OPTIONS, EVENT_INTENSITY_SCALE, MARKETS } from '../types/domain';
@@ -84,6 +85,9 @@ export const normalizeRoom = (roomId: string, data: Partial<Room>): Room => ({
       // 공개가격 필드가 없을 때는 안전하게 최초 기준가격부터 시작한다.
       publicPrice: storedMarket?.publicPrice ?? defaultMarket.announcedPrice,
       publicPriceRound: storedMarket?.publicPriceRound ?? 0,
+      demandAtBasePrice: storedMarket?.demandAtBasePrice ?? defaultMarket.demandAtBasePrice,
+      supplyAtBasePrice: storedMarket?.supplyAtBasePrice ?? defaultMarket.demandAtBasePrice,
+      rentPerRound: storedMarket?.rentPerRound ?? defaultMarket.rentPerRound,
       materialCostMultiplier: hasActiveSupplyState && !isLegacyRiceEconomy ? storedMarket.materialCostMultiplier : defaultMarket.materialCostMultiplier,
       wagePerWorker: hasActiveSupplyState && !isLegacyRiceEconomy ? storedMarket.wagePerWorker : defaultMarket.wagePerWorker,
       firstWorkerProductivity: hasActiveSupplyState && !isLegacyRiceUnit
@@ -129,7 +133,7 @@ const optionIsTemporary = (optionId?: string) => Boolean(DEMAND_EVENT_OPTIONS.fi
 const isTemporaryDemandEvent = (event?: DemandEvent) => optionIsTemporary(event?.optionId);
 const isTemporarySupplyEvent = (event?: DemandEvent) => optionIsTemporary(event?.supplyOptionId);
 
-const applyDemandEvents = (markets: Market[], events: DemandEvent[]) => markets.map((market) => {
+export const applyDemandEvents = (markets: Market[], events: DemandEvent[]) => markets.map((market) => {
   const event = events.find((item) => item.marketId === market.id);
   const baseline = market;
   const settings = {
@@ -152,35 +156,36 @@ const applyDemandEvents = (markets: Market[], events: DemandEvent[]) => markets.
   return {
     ...baseline,
     ...settings,
+    supplyAtBasePrice: baseline.supplyAtBasePrice ?? baseline.demandAtBasePrice,
     publicPrice: market.publicPrice ?? market.announcedPrice,
     publicPriceRound: market.publicPriceRound ?? 0,
     announcedPrice: Math.max(10, Math.round((baseline.announcedPrice * equilibriumFactor) / 10) * 10),
-    demandAtBasePrice: Math.max(1, Math.round(baseline.demandAtBasePrice * demandMultiplier)),
+    demandAtBasePrice: Math.max(1, baseline.demandAtBasePrice * demandMultiplier),
     materialCostMultiplier: baseline.materialCostMultiplier * scaleChange(legacySupplyEvent ? event.materialMultiplier : event.supplyMaterialMultiplier, supplyScale),
     wagePerWorker: Math.round(baseline.wagePerWorker * scaleChange(legacySupplyEvent ? event.wageMultiplier : event.supplyWageMultiplier, supplyScale)),
     rentPerRound: Math.round(baseline.rentPerRound * scaleChange(event.supplyRentMultiplier, supplyScale)),
     firstWorkerProductivity: baseline.firstWorkerProductivity * scaleChange(legacySupplyEvent ? event.productivityMultiplier : event.supplyProductivityMultiplier, supplyScale),
     supplyShiftMultiplier: baseline.supplyShiftMultiplier * supplyMultiplier,
-    producerTaxPerUnit: event.producerTaxPerUnit || 0,
-    producerSubsidyPerUnit: event.producerSubsidyPerUnit || 0,
+    producerTaxPerUnit: event.supplyOptionId === 'supply_baseline' ? baseline.producerTaxPerUnit : event.producerTaxPerUnit || 0,
+    producerSubsidyPerUnit: event.supplyOptionId === 'supply_baseline' ? baseline.producerSubsidyPerUnit : event.producerSubsidyPerUnit || 0,
     disasterLossRate: event.disasterLossRate || 0,
   };
 });
 
-const removeExpiredTemporaryEffects = (markets: Market[], previousEvents: DemandEvent[]) => markets.map((market) => {
+export const removeExpiredTemporaryEffects = (markets: Market[], previousEvents: DemandEvent[]) => markets.map((market) => {
   const previous = previousEvents.find((event) => event.marketId === market.id);
   if (!previous || (!isTemporaryDemandEvent(previous) && !isTemporarySupplyEvent(previous))) return market;
-  const demandScale = EVENT_INTENSITY_SCALE[previous.demandIntensity || 'MEDIUM'];
-  const supplyScale = EVENT_INTENSITY_SCALE[previous.supplyIntensity || 'MEDIUM'];
+  const demandScale = previous.demandIntensity ? EVENT_INTENSITY_SCALE[previous.demandIntensity] : market.demandEventEffectScale;
+  const supplyScale = previous.supplyIntensity ? EVENT_INTENSITY_SCALE[previous.supplyIntensity] : market.supplyEventEffectScale;
   const demandMultiplier = isTemporaryDemandEvent(previous) ? scaleChange(previous.multiplier, demandScale) : 1;
-  const supplyMultiplier = isTemporarySupplyEvent(previous) ? scaleChange(previous.supplyCurveMultiplier, supplyScale) : 1;
+  const supplyMultiplier = isTemporarySupplyEvent(previous) ? scaleChange(previous.supplyCurveMultiplier ?? previous.supplyMultiplier, supplyScale) : 1;
   const equilibriumFactor = market.marketType === 'PERFECT_COMPETITION'
     ? Math.pow((1 / demandMultiplier) / (1 / supplyMultiplier), 1 / Math.max(0.1, market.priceElasticity + market.supplyElasticity))
     : Math.pow((1 / demandMultiplier) / (1 / supplyMultiplier), 0.5);
   return {
     ...market,
     announcedPrice: Math.max(10, Math.round((market.announcedPrice * equilibriumFactor) / 10) * 10),
-    demandAtBasePrice: Math.max(1, Math.round(market.demandAtBasePrice / demandMultiplier)),
+    demandAtBasePrice: Math.max(1, market.demandAtBasePrice / demandMultiplier),
     supplyShiftMultiplier: market.supplyShiftMultiplier / supplyMultiplier,
     disasterLossRate: 0,
   };
@@ -206,8 +211,9 @@ const withRecoveryNews = (events: DemandEvent[], previousEvents: DemandEvent[], 
   };
 });
 
-const transitionMarkets = (room: Room, nextEvents: DemandEvent[]) =>
-  applyDemandEvents(removeExpiredTemporaryEffects(room.markets, room.demandEvents), nextEvents);
+export const transitionMarkets = (room: Room, nextEvents: DemandEvent[]) =>
+  applyDemandEvents(removeExpiredTemporaryEffects(room.markets, room.demandEvents), nextEvents).map(market =>
+    market.marketType === 'PERFECT_COMPETITION' ? { ...market, announcedPrice: calculateCompetitiveMarket(market, 0).marketPrice } : market);
 
 type BatchOperation =
   | { kind: 'set'; ref: DocumentReference; data: DocumentData }

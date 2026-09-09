@@ -4,7 +4,6 @@ import { db } from './firebase/config';
 import { normalizeRoom } from './roomService';
 import { EMPTY_UPGRADES } from '../types/domain';
 import type { Company, CompanyUpgrades, InventoryItem, MachineAssetLot, Market, MarketRoundResult, ProductionPlan, Room, UpgradeType } from '../types/domain';
-import { EVENT_INTENSITY_SCALE } from '../types/domain';
 
 export interface ProductionQuote {
   rentCost: number; wageCost: number; unitMaterialCost: number; materialCost: number; policyCost: number; earlyTerminationCost: number; productionCost: number;
@@ -299,7 +298,7 @@ export const calculateRepresentativeMarketSupply = (market: Market, price: numbe
   // 종량세는 생산자가 실제로 받는 가격을 낮추고, 보조금은 높인다.
   // 같은 정책 금액을 학생 기업 비용과 시장 전체 공급곡선에 함께 반영한다.
   const supplyPrice = Math.max(0, price - (market.producerTaxPerUnit || 0) + (market.producerSubsidyPerUnit || 0));
-  const baseQuantity = market.demandAtBasePrice;
+  const baseQuantity = market.supplyAtBasePrice ?? market.demandAtBasePrice;
   const basePrice = Math.max(1, market.basePrice);
 
   // 쌀은 생산을 시작하기 위한 최소 가격을 500원으로 두고,
@@ -353,10 +352,10 @@ const solveCompetitivePrice = (market: Market, additionalSupply: number, demandM
   return (lowPrice + highPrice) / 2;
 };
 
-export const calculateCompetitiveMarket = (market: Market, studentSupply: number, demandMultiplier = 1) => {
-  const effectiveStudentSupply = studentSupply * market.studentSupplyWeight;
+export const calculateCompetitiveMarket = (market: Market, _studentSupply: number, demandMultiplier = 1) => {
+  const effectiveStudentSupply = 0; // Price-taking firms do not move the market price.
   const priceWithoutStudentSupply = solveCompetitivePrice(market, 0, demandMultiplier);
-  const unroundedMarketPrice = solveCompetitivePrice(market, effectiveStudentSupply, demandMultiplier);
+  const unroundedMarketPrice = priceWithoutStudentSupply;
   const marketPrice = Math.max(10, Math.round(unroundedMarketPrice / 10) * 10);
   return {
     marketPrice,
@@ -750,7 +749,7 @@ export const productionService = {
       const nextMarkets = room.markets.map((market) => {
         const marketPlans = plans.filter((plan) => plan.productId === market.id);
           const demandEvent = room.demandEvents.find((event) => event.marketId === market.id);
-          const demandMultiplier = demandEvent?.effectType === 'SUPPLY' ? 1 : scaleMarketEventFactor(demandEvent?.multiplier, EVENT_INTENSITY_SCALE[demandEvent?.demandIntensity || 'MEDIUM']);
+          const demandMultiplier = 1; // News is already included in the persisted market state.
           const clearing = calculateMarketClearing(market, marketPlans, demandMultiplier, demandEvent?.ecoPreferenceBoost || 0);
         const resultRef = doc(db, 'rooms', roomId, 'marketResults', `${room.currentRound}_${market.id}`);
         const result: MarketRoundResult = {

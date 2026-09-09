@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import type { Unsubscribe } from 'firebase/firestore';
 import { db } from './firebase/config';
+import { normalizeRoom } from './roomService';
 import type { Company, StudentMember } from '../types/domain';
 import { EMPTY_UPGRADES, INDUSTRY_TRAITS, INITIAL_COMPANY_CASH, TECHNOLOGIES } from '../types/domain';
 
@@ -134,15 +135,22 @@ export const companyService = {
       transaction.update(companyRef, { studentMembers: normalizedMembers });
     });
   },
-  awardQuiz: async (roomId: string, companyId: string, roundNumber: number, reward = 20000): Promise<void> => {
+  awardQuiz: async (roomId: string, companyId: string, roundNumber: number, choice: number): Promise<void> => {
     const companyRef = doc(db, 'rooms', roomId, 'companies', companyId);
-    await runTransaction(db, async (transaction) => {
-      const snapshot = await transaction.get(companyRef);
-      if (!snapshot.exists()) throw new Error('COMPANY_NOT_FOUND');
+    await runTransaction(db, async transaction => {
+      const [snapshot, roomSnapshot] = await Promise.all([transaction.get(companyRef), transaction.get(doc(db, 'rooms', roomId))]);
+      if (!snapshot.exists() || !roomSnapshot.exists()) throw new Error('COMPANY_NOT_FOUND');
+      const room = normalizeRoom(roomId, roomSnapshot.data());
+      if (room.currentRound !== roundNumber) throw new Error('ROUND_CHANGED');
+      const quiz = room.economicsQuizzes?.find((q: { id: string }) => q.id === room.quizSchedule?.[String(roundNumber)]);
+      if (!quiz || !Number.isInteger(choice) || choice < 0 || choice >= quiz.choices.length) throw new Error('QUIZ_NOT_AVAILABLE');
       const company = snapshot.data() as Company;
       const completed = company.quizCompletedRounds || [];
-      if (completed.includes(roundNumber)) throw new Error('QUIZ_ALREADY_COMPLETED');
-      transaction.update(companyRef, { cash: company.cash + reward, quizCompletedRounds: [...completed, roundNumber] });
+      if (completed.includes(roundNumber) || company.quizAttempts?.[String(roundNumber)]) throw new Error('QUIZ_ALREADY_COMPLETED');
+      const correct = choice === quiz.answer;
+      const reward = correct ? quiz.reward : 0;
+      transaction.update(companyRef, { cash: company.cash + reward, quizCompletedRounds: [...completed, roundNumber],
+        quizAttempts: { ...(company.quizAttempts || {}), [String(roundNumber)]: { quizId: quiz.id, choice, correct, reward, answer: quiz.answer } } });
     });
   },
   /**
@@ -336,7 +344,7 @@ export const companyService = {
       transaction.update(companyRef, { cash: company.cash - conversionCost, industryTraitId: industry.id, industryTraitName: industry.name, industryTraitDescription: industry.description, industryTraitIcon: industry.icon });
     });
   },
-  exitMarket: async (roomId: string, companyId: string, marketId: string): Promise<number> => {
+  exitMarket: async (roomId: string, companyId: string, marketId: string, targetMarketId?: string, nextTraitId?: string): Promise<number> => {
     const roomRef = doc(db, 'rooms', roomId);
     const companyRef = doc(db, 'rooms', roomId, 'companies', companyId);
     const inventoryRef = doc(db, 'rooms', roomId, 'companies', companyId, 'inventory', marketId);
@@ -345,7 +353,11 @@ export const companyService = {
       if (!roomSnapshot.exists() || !companySnapshot.exists()) throw new Error('COMPANY_NOT_FOUND');
       const room = roomSnapshot.data();
       const company = companySnapshot.data() as Company;
-      if (room.roundPhase !== 'DECISION') throw new Error('MARKET_EXIT_CLOSED');
+      if (room.roundPhase !== 'DECISION' || room.status === 'FINISHED') throw new Error('MARKET_EXIT_CLOSED');
+      if (company.currentMarketId !== marketId) throw new Error('MARKET_CHANGED');
+      if (targetMarketId && !room.markets.some((m: { id: string }) => m.id === targetMarketId)) throw new Error('MARKET_NOT_FOUND');
+      const plan = await transaction.get(doc(db, 'rooms', roomId, 'productionPlans', companyId + '_' + room.currentRound));
+      if (plan.exists()) throw new Error('PRODUCTION_ALREADY_CONFIRMED');
       const round = Number(room.currentRound || 1);
       const marketAssets = (company.machineAssets || []).filter((asset) => asset.marketId === marketId);
       const machineRecovery = marketAssets.reduce((sum, asset) => {
@@ -355,8 +367,13 @@ export const companyService = {
       const inventory = inventorySnapshot.exists() ? inventorySnapshot.data() as { quantity?: number; averageUnitCost?: number } : null;
       const inventoryRecovery = Math.round((inventory?.quantity || 0) * (inventory?.averageUnitCost || 0) * 0.5);
       const recovery = machineRecovery + inventoryRecovery;
+      const nextTrait = nextTraitId ? INDUSTRY_TRAITS.find(trait => trait.id === nextTraitId) : undefined;
+      if (nextTraitId && !nextTrait) throw new Error('INVALID_TRAIT');
+      const traitCost = nextTrait && nextTrait.id !== company.industryTraitId ? 15000 : 0;
+      if (company.cash + recovery < traitCost) throw new Error('INSUFFICIENT_CASH');
       const remainingAssets = (company.machineAssets || []).filter((asset) => asset.marketId !== marketId);
-      transaction.update(companyRef, { cash: company.cash + recovery, machineAssets: remainingAssets, machineCount: 1 + remainingAssets.reduce((sum, asset) => sum + asset.quantity, 0), currentMarketId: null });
+      transaction.update(companyRef, { cash: company.cash + recovery - traitCost, machineAssets: remainingAssets, machineCount: 1 + remainingAssets.reduce((sum, asset) => sum + asset.quantity, 0), currentMarketId: targetMarketId || null,
+        ...(nextTrait ? { industryTraitId: nextTrait.id, industryTraitName: nextTrait.name, industryTraitDescription: nextTrait.description, industryTraitIcon: nextTrait.icon, traitsConfirmed: true } : {}) });
       if (inventorySnapshot.exists()) transaction.update(inventoryRef, { quantity: 0, updatedAt: Date.now() });
       return recovery;
     });

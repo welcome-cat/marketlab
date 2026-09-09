@@ -10,6 +10,7 @@ export interface Market {
   publicPriceRound?: number;
   basePrice: number;
   demandAtBasePrice: number;
+  supplyAtBasePrice?: number;
   materialCostMultiplier: number;
   marketType: 'PERFECT_COMPETITION' | 'OLIGOPOLY';
   priceControl: 'MARKET_PRICE' | 'FIRM_PRICE';
@@ -252,6 +253,7 @@ export interface Company {
   riceCycleStartRound?: number;
   riceCycleProducedQuantity?: number;
   quizCompletedRounds?: number[];
+  quizAttempts?: Record<string, { quizId: string; choice: number; correct: boolean; reward: number; answer: number }>;
   studentMembers?: StudentMember[];
   status: 'ACTIVE'; createdAt: number; joinedAt: number;
 }

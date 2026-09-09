@@ -6,9 +6,9 @@ import { StudentRosterEditor } from '../components/StudentRosterEditor';
 import { TouchStepper } from '../components/TouchStepper';
 import { StudentTutorial } from '../components/StudentTutorial';
 import { PriceButtons } from '../components/PriceButtons';
-import { calculateLoanTerms, calculateMachineRepairCost, calculateMarketClearing, calculateMinimumWorkerCount, calculateProductionQuote, companyService, getTechnologyMarketFit, machineDepreciationRate, productionService, reflectionService, roomService, scaleMarketEventFactor } from '../services';
+import { calculateLoanTerms, calculateMachineRepairCost, calculateMarketClearing, calculateMinimumWorkerCount, calculateProductionQuote, companyService, getTechnologyMarketFit, machineDepreciationRate, productionService, reflectionService, roomService } from '../services';
 import type { Company, InventoryItem, LearningReflection, Market, ProductionPlan, Room, UnlockRounds, UpgradeType } from '../types/domain';
-import { DEFAULT_REFLECTION_SHEETS, EVENT_INTENSITY_SCALE, INDUSTRY_TRAITS, INITIAL_COMPANY_CASH, getUpgradeDescription, UPGRADE_OPTIONS } from '../types/domain';
+import { DEFAULT_REFLECTION_SHEETS, INDUSTRY_TRAITS, INITIAL_COMPANY_CASH, getUpgradeDescription, UPGRADE_OPTIONS } from '../types/domain';
 
 const STUDENT_SESSION_KEY = 'marketlab:student-session';
 const saveSession = (roomId: string, companyName: string) => {
@@ -108,6 +108,7 @@ export const StudentPage: React.FC = () => {
   const navigate = useNavigate();
   const roomId = params.get('roomId') || '';
   const companyName = params.get('name') || '';
+  const teacherEditing = params.get('teacher') === '1' && sessionStorage.getItem('marketlab:teacher-auth') === '1';
   const readOnly = params.get('readonly') === '1';
   const studentMembersParam = params.get('members') || '';
   const queryError = !roomId || !companyName ? '룸 코드 또는 회사 이름이 누락되었습니다.' : null;
@@ -135,6 +136,11 @@ export const StudentPage: React.FC = () => {
   const [productionConfirmOpen, setProductionConfirmOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [quizOpen, setQuizOpen] = useState(false);
+  const [quizChoice, setQuizChoice] = useState<number | null>(null);
+  const [quizMessage, setQuizMessage] = useState("");
+  const [marketChangeTarget, setMarketChangeTarget] = useState<Market | null>(null);
+  const [switchTraitId, setSwitchTraitId] = useState('');
+  const priceResetKey = useRef('');
   const [rosterOpen, setRosterOpen] = useState(false);
   const [showSupplyCurve, setShowSupplyCurve] = useState(true);
   const [showProducerSurplus, setShowProducerSurplus] = useState(false);
@@ -167,7 +173,7 @@ export const StudentPage: React.FC = () => {
     let mounted = true;
     companyService.registerCompany(roomId, companyName, studentMembers).then((value) => {
       if (!mounted) return;
-      saveSession(roomId, value.name); setCompany(value); if (value.currentMarketId) setSelectedMarketId(value.currentMarketId); setWorkerCount(value.employeeCount || 1); setLoading(false);
+      if (!teacherEditing) saveSession(roomId, value.name); setCompany(value); if (value.currentMarketId) setSelectedMarketId(value.currentMarketId); setWorkerCount(value.employeeCount || 1); setLoading(false);
     }).catch((reason) => { if (mounted) { setError(errorText(reason)); setLoading(false); } });
     const unsubscribe = roomService.subscribeRoom(roomId, (value) => {
       if (!mounted || !value) return;
@@ -180,11 +186,15 @@ export const StudentPage: React.FC = () => {
         setReflection(null);
         setReflectionAnswers({});
       }
+      if (observedRound.current !== value.currentRound || value.roundPhase === 'RESULT') {
+        setPricePrediction('SAME');
+        setQuizChoice(null); setQuizMessage('');
+      }
       observedRound.current = value.currentRound;
       setRoom(value);
     });
     return () => { mounted = false; unsubscribe(); };
-  }, [roomId, companyName, studentMembersParam]);
+  }, [roomId, companyName, studentMembersParam, teacherEditing]);
 
   useEffect(() => {
     if (!companyId) return;
@@ -208,11 +218,20 @@ export const StudentPage: React.FC = () => {
     return productionService.subscribeProductionPlan(roomId, companyId, currentRound, (value) => {
       setPlan(value);
       // 슬라이더 저장 중에는 지연 도착한 이전 스냅샷으로 화면 값을 되돌리지 않는다.
-      if (value?.askingPrice && pendingAskingPrice.current === null) setAskingPrice(value.askingPrice);
-      if (value?.pricePrediction) setPricePrediction(value.pricePrediction);
+      if (value?.settlementStatus !== 'SETTLED' && value?.askingPrice && pendingAskingPrice.current === null) setAskingPrice(value.askingPrice);
+      if (value?.settlementStatus !== 'SETTLED' && value?.pricePrediction) setPricePrediction(value.pricePrediction);
     });
   }, [roomId, companyId, currentRound]);
 
+  useEffect(() => {
+    if (!room || !company) return;
+    const key = `${room.id}:${room.currentRound}:${room.roundPhase}`;
+    if (priceResetKey.current === key) return;
+    if (room.roundPhase === 'RESULT' || !plan) {
+      const market = room.markets.find(m => m.id === (company.currentMarketId || selectedMarketId));
+      if (market) { priceResetKey.current = key; setAskingPrice(getPublicMarketPrice(market)); setPricePrediction('SAME'); }
+    }
+  }, [room, company, plan, selectedMarketId]);
   useEffect(() => () => {
     if (askingPriceSaveTimer.current !== null) window.clearTimeout(askingPriceSaveTimer.current);
     pendingAskingPrice.current = null;
@@ -311,6 +330,7 @@ export const StudentPage: React.FC = () => {
   const canChooseMarket = room.status !== 'FINISHED' && room.roundPhase === 'DECISION' && !plan;
   const traitSelectionOpen = room.roundPhase === 'DECISION' && room.status !== 'FINISHED';
   const canConfirm = isDecision && !plan && !submitting && company.traitsConfirmed !== false && (!company.currentMarketId || company.currentMarketId === selectedMarket.id) && (plannedProductionQty > 0 || isRiceMarket) && workerCount >= 1 && workerCount <= cashLimitedWorkerCount && quote.currentMarginalProduct > 0 && plannedProductionQty <= cashLimitedCapacity && remainingBudget >= 0 && quote.machineCountAfter <= selectedMarket.maxMachines;
+  const confirmReason = room.roundPhase === 'RESULT' ? '판매가 종료되었습니다. 거래 결과를 확인하고 다음 라운드를 기다려주세요. 희망가격은 이전 거래가격, 가격 방향 예측은 유지로 준비됩니다.' : room.roundPhase === 'SELLING' && plan ? '생산계획은 확정되어 변경할 수 없습니다. 판매 진행 타일에서 거래 여부와 희망가격을 확인하세요.' : plan ? '이번 라운드의 생산 준비가 완료되었습니다. 고용·투자·생산량은 바꿀 수 없습니다. 판매가 시작되면 판매 타일에서 희망가격을 조절하세요.' : !isDecision ? '현재는 생산 결정 시간이 아닙니다. 교사의 다음 라운드 진행을 기다려주세요.' : company.traitsConfirmed === false ? '진단서에서 기업 특성을 먼저 확정해주세요.' : company.currentMarketId && company.currentMarketId !== selectedMarket.id ? '기존 시장의 자산 정산이 필요합니다.' : remainingBudget < 0 ? '생산비가 보유 현금을 초과했습니다.' : plannedProductionQty <= 0 && !isRiceMarket ? '희망 생산량을 1개 이상 선택해주세요.' : !canConfirm ? '고용 인원과 생산량을 생산능력·현금 한도 안으로 조정해주세요.' : '';
   const marginalCostLabel = (effectiveMarginalCost === null || effectiveMarginalCost === undefined) ? '생산 불가' : `${effectiveMarginalCost.toLocaleString()}원/개`;
   const newspaperEvents = room.pendingDemandEvents.length > 0 ? room.pendingDemandEvents : room.demandEvents;
   const newspaperRound = room.pendingDemandEvents.length > 0 && room.status === 'RUNNING' ? room.currentRound + 1 : room.currentRound;
@@ -318,8 +338,7 @@ export const StudentPage: React.FC = () => {
   const newlyUnlockedList = getNewlyUnlockedFeatures(room.currentRound, room.unlockRounds);
   const sellingProgress = room.roundPhase === 'SELLING' ? Math.max(0, Math.min(1, (clock - (room.sellingStartedAt || clock)) / 30000)) : 0;
   const sellingMonth = Math.min(4, Math.max(1, Math.ceil(sellingProgress * 4)));
-  const selectedDemandEvent = room.demandEvents.find((event) => event.marketId === selectedMarket.id);
-  const selectedDemandMultiplier = selectedDemandEvent?.effectType === 'SUPPLY' ? 1 : scaleMarketEventFactor(selectedDemandEvent?.multiplier, EVENT_INTENSITY_SCALE[selectedDemandEvent?.demandIntensity || 'MEDIUM']);
+  const selectedDemandMultiplier = 1; // Persisted market already includes news.
   const selectedClearing = calculateMarketClearing(selectedMarket, marketPlans.filter((item) => item.productId === selectedMarket.id), selectedDemandMultiplier);
   const loanTerms = calculateLoanTerms(company, inventory ? [inventory] : [], room.currentRound);
   const projectedSoldQuantity = plan ? selectedClearing.soldByPlan.get(plan.id) || 0 : 0;
@@ -403,12 +422,13 @@ export const StudentPage: React.FC = () => {
     catch { setMessage('상환액이 대출잔액 또는 보유현금을 초과했습니다.'); }
   };
 
-  const logout = () => { try { localStorage.removeItem(STUDENT_SESSION_KEY); } catch { /* 이동 계속 */ } navigate('/', { replace: true }); };
-  const answerQuiz = async (choice: number) => {
-    if (!currentQuiz) return;
-    if (choice !== currentQuiz.answer) return setMessage('아쉽습니다. 개념을 다시 생각하고 다른 답을 골라보세요.');
-    try { await companyService.awardQuiz(roomId, company.id, room.currentRound, currentQuiz.reward); setQuizOpen(false); setMessage(`정답입니다! 운영자금 ${currentQuiz.reward.toLocaleString()}원을 확보했습니다.`); }
-    catch { setMessage('이번 라운드의 퀴즈 보상은 이미 받았습니다.'); }
+  const logout = () => { if (teacherEditing) { navigate('/teacher'); return; } try { localStorage.removeItem(STUDENT_SESSION_KEY); } catch { /* 이동 계속 */ } navigate('/', { replace: true }); };
+  const answerQuiz = async () => {
+    if (!currentQuiz || quizChoice === null || submitting) return;
+    setSubmitting(true); setQuizMessage('');
+    try { await companyService.awardQuiz(roomId, company.id, room.currentRound, quizChoice); }
+    catch (error) { setQuizMessage(error instanceof Error && error.message === 'QUIZ_ALREADY_COMPLETED' ? '이미 제출된 답안입니다.' : '제출하지 못했습니다. 라운드와 연결 상태를 확인해주세요.'); }
+    finally { setSubmitting(false); }
   };
   const applyAskingPrice = (nextPrice = askingPrice, immediate = false) => {
     if (!plan) return;
@@ -477,12 +497,10 @@ export const StudentPage: React.FC = () => {
     finally { setSubmitting(false); }
   };
 
-  const settleMarketExit = async () => {
+  const settleMarketExit = async (targetMarket?: Market) => {
     if (!company.currentMarketId) return;
-    const oldMarket = room.markets.find((market) => market.id === company.currentMarketId);
-    if (!window.confirm(`${oldMarket?.name || '기존 시장'}에서 퇴거할까요? 전용 기계는 감가된 중고가격, 재고는 장부가의 50%로 처분됩니다.`)) return;
-    try { setSubmitting(true); const recovery = await companyService.exitMarket(roomId, company.id, company.currentMarketId); setMessage(`시장 퇴거 정산으로 ${recovery.toLocaleString()}원을 회수했습니다.`); }
-    catch { setMessage('현재는 시장에서 퇴거할 수 없습니다. 생산 결정 시간을 확인해주세요.'); }
+    try { setSubmitting(true); const recovery = await companyService.exitMarket(roomId, company.id, company.currentMarketId, targetMarket?.id, switchTraitId || undefined); setMarketChangeTarget(null); if (targetMarket) { setSelectedMarketId(targetMarket.id); setAskingPrice(getPublicMarketPrice(targetMarket)); setMachinePurchases(0); setMachineSales(0); setMachineRepairs(0); setUpgradePurchase(null); setProductionQty(0); } setMessage(`시장 퇴거 정산으로 ${recovery.toLocaleString()}원을 회수했습니다.`); }
+    catch (error) { setMessage(error instanceof Error && error.message === 'INSUFFICIENT_CASH' ? '업종 경험 변경비가 부족합니다. 기존 경험 유지로 선택해주세요.' : '시장 변경에 실패했습니다. 이미 생산을 확정했거나 라운드가 바뀌었는지 확인해주세요.'); }
     finally { setSubmitting(false); }
   };
 
@@ -498,7 +516,10 @@ export const StudentPage: React.FC = () => {
     };
   }).sort((a, b) => b.latestProfit - a.latestProfit);
 
+  const exitRecovery = (company.machineAssets || []).filter(asset => asset.marketId === company.currentMarketId).reduce((sum, asset) => sum + Math.round(asset.purchasePrice * Math.max(0, 0.3 - Math.max(0, room.currentRound - asset.purchasedRound - 1) * 0.05)) * asset.quantity, 0) + Math.round((inventory?.quantity || 0) * (inventory?.averageUnitCost || 0) * 0.5);
   return <div className={`student-page${readOnly ? ' student-readonly' : ''}`} style={{ minHeight: '100vh', background: '#f8fafc' }}>
+    {marketChangeTarget && <div className="teacher-nested-modal" role="dialog" aria-modal="true" aria-labelledby="market-change-title"><section className="teacher-company-status-modal" style={card}><h2 id="market-change-title">기존의 자산을 매각하고 {marketChangeTarget.name}으로 변경하시겠습니까?</h2><p>전용 기계는 감가된 중고가격, 재고는 장부가의 50%로 정산합니다.</p><p>예상 회수액: <b>{exitRecovery.toLocaleString()}원</b> · 새 시장 진입비: <b>{marketChangeTarget.initialSetupCost.toLocaleString()}원</b> (생산 확정 시 반영)</p><label>업종 경험<select value={switchTraitId} onChange={event => setSwitchTraitId(event.target.value)} disabled={submitting}>{INDUSTRY_TRAITS.map(trait => <option key={trait.id} value={trait.id}>{trait.name}{trait.id === company.industryTraitId ? ' (현재 경험 유지 · 무료)' : ' (변경 · 15,000원)'}</option>)}</select></label><p>변경 후 고용·생산량을 확인하고 생산을 확정하세요.</p><button disabled={submitting} onClick={() => setMarketChangeTarget(null)}>취소</button><button disabled={submitting} onClick={() => settleMarketExit(marketChangeTarget)}>{submitting ? '처리 중…' : '정산하고 시장 변경'}</button><p role="status">{message}</p></section></div>}
+    {teacherEditing && <div className="teacher-readonly-banner">교사 편집 중 · {company.name} <button onClick={() => navigate("/teacher")}>교사 대시보드로</button></div>}
     {readOnly && <div className="teacher-readonly-banner">👁️ 교사용 읽기 전용 화면 — 학생의 선택을 수정할 수 없습니다.</div>}
     {productionConfirmOpen && <div className="confirmation-backdrop" role="presentation">
       <section className="production-confirmation" role="dialog" aria-modal="true" aria-labelledby="production-confirmation-title">
@@ -623,14 +644,17 @@ export const StudentPage: React.FC = () => {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', marginTop: '14px' }}>
         <div><small>보유 자본금</small><strong style={{ display: 'block', color: '#059669' }}>{company.cash.toLocaleString()}원</strong></div>
         <div><small>보유 기계</small><strong style={{ display: 'block' }}>{company.machineCount || 1}대</strong></div>
-        <div><small>기업 업그레이드</small><strong style={{ display: 'block' }}>총 Lv.{Object.values(company.upgrades || {}).reduce((sum, level) => sum + level, 0)}</strong></div>
+        <div><small>대출잔액(빚)</small><strong style={{ display: "block" }}>{(company.loanBalance || 0).toLocaleString()}원</strong></div><div><small>현금 − 대출잔액</small><strong style={{ display: "block" }}>{(company.cash - (company.loanBalance || 0)).toLocaleString()}원</strong></div><div><small>기업 업그레이드</small><strong style={{ display: 'block' }}>총 Lv.{Object.values(company.upgrades || {}).reduce((sum, level) => sum + level, 0)}</strong></div>
       </div>
     </section>
 
     <section className="student-round" style={{ ...card, border: `1px solid ${isRunning ? '#86efac' : '#fde68a'}`, background: isRunning ? '#f0fdf4' : '#fffbeb' }}>
       <strong>{room.status === 'WAITING' ? '⏳ 교사가 수업을 시작하기 전입니다.' : room.status === 'FINISHED' ? '🏁 수업이 종료되었습니다.' : room.roundPhase === 'RESULT' ? `📊 Round ${room.currentRound} 거래 결과` : room.roundPhase === 'SELLING' ? `🛒 Round ${room.currentRound} 판매 ${sellingMonth}개월 차 / 4개월` : room.roundPhase === 'SETTLING' ? `⏳ Round ${room.currentRound} 거래 계산 중` : `▶ Round ${room.currentRound} 기업 선택 중`}</strong>
       <span style={{ display: 'block', fontSize: '13px', color: '#64748b', marginTop: '4px' }}>1라운드는 4개월입니다. 모든 시장에서 매 라운드 생산·판매합니다. 쌀도 매 라운드 수확하고, 남은 물량은 재고로 보관합니다.</span>
-      {currentQuiz ? <><button className="quiz-reward-button" type="button" disabled={(company.quizCompletedRounds || []).includes(room.currentRound)} onClick={() => setQuizOpen((open) => !open)}>{(company.quizCompletedRounds || []).includes(room.currentRound) ? '✅ 이번 라운드 퀴즈 완료' : '💰 경제 퀴즈로 현금 확보'}</button>{quizOpen && <div style={{ marginTop: '10px', padding: '12px', background: '#fff', borderRadius: '10px' }}><strong>{currentQuiz.question}</strong><div style={{ display: 'flex', gap: '7px', marginTop: '8px', flexWrap: 'wrap' }}>{currentQuiz.choices.map((choice, index) => <button type="button" key={`${currentQuiz.id}-${index}`} onClick={() => answerQuiz(index)}>{choice}</button>)}</div><small style={{ display: 'block', marginTop: '6px', color: '#64748b' }}>정답 보상 {currentQuiz.reward.toLocaleString()}원 · 라운드당 1회</small></div>}</> : <small style={{ display: 'block', marginTop: '12px', color: '#64748b' }}>이번 라운드에는 경제 퀴즈가 없습니다.</small>}
+      {currentQuiz ? <><button className="quiz-reward-button" type="button" onClick={() => setQuizOpen(open => !open)}>경제 퀴즈 · {(company.quizCompletedRounds || []).includes(room.currentRound) ? '제출 완료' : '미제출'}</button>
+      {company.quizAttempts?.[String(room.currentRound)] && <p role="status">{company.quizAttempts[String(room.currentRound)].correct ? '정답입니다' : '오답입니다'} · 보상 {company.quizAttempts[String(room.currentRound)].reward.toLocaleString()}원 · 정답: {currentQuiz.choices[company.quizAttempts[String(room.currentRound)].answer]}</p>}
+      {quizOpen && <div><strong>{currentQuiz.question}</strong>{currentQuiz.choices.map((choice, index) => <label key={index} style={{ display: 'block', margin: '8px 0' }}><input type="radio" name="quiz-answer" checked={quizChoice === index} disabled={submitting || company.quizCompletedRounds?.includes(room.currentRound)} onChange={() => setQuizChoice(index)} /> {choice}</label>)}<button onClick={answerQuiz} disabled={quizChoice === null || submitting || company.quizCompletedRounds?.includes(room.currentRound)}>답안 제출</button><p>기업별 라운드당 1회 · 제출 후 변경 불가 · 정답 보상 {currentQuiz.reward.toLocaleString()}원</p></div>}
+      {quizMessage && <p role="alert">{quizMessage}</p>}</> : <p>이번 라운드에는 경제 퀴즈가 없습니다.</p>}
     </section>
 
     <details ref={newsPanelRef} className="student-news" style={{ ...card, border: '2px solid #d97706', background: '#fffbeb' }}>
@@ -669,19 +693,19 @@ export const StudentPage: React.FC = () => {
         const chosen = selectedMarket.id === market.id;
         const visiblePrice = getPublicMarketPrice(market);
         const visiblePriceLabel = room.currentRound === 1 || !market.publicPriceRound ? '초기 기준가격' : `Round ${market.publicPriceRound} 거래가격`;
-        return <button type="button" key={market.id} disabled={!canChooseMarket} onClick={() => { setSelectedMarketId(market.id); setAskingPrice(visiblePrice); }} style={{ textAlign: 'left', padding: '14px', borderRadius: '11px', border: chosen ? '2px solid #2563eb' : '1px solid #e2e8f0', background: chosen ? '#eff6ff' : '#fff', cursor: canChooseMarket ? 'pointer' : 'not-allowed' }}>
+        return <button type="button" key={market.id} disabled={!canChooseMarket || submitting} onClick={() => { if (company.currentMarketId && company.currentMarketId !== market.id) { setSwitchTraitId(company.industryTraitId || ""); setMarketChangeTarget(market); return; } setSelectedMarketId(market.id); setAskingPrice(visiblePrice); }} style={{ textAlign: 'left', padding: '14px', borderRadius: '11px', border: chosen ? '2px solid #2563eb' : '1px solid #e2e8f0', background: chosen ? '#eff6ff' : '#fff', cursor: canChooseMarket ? 'pointer' : 'not-allowed' }}>
           <span style={{ fontSize: '25px' }}>{market.icon}</span><strong style={{ display: 'block' }}>{market.name}</strong><b style={{ color: '#dc2626' }}>{visiblePriceLabel} {visiblePrice.toLocaleString()}원</b><small style={{ display: 'block', color: '#475569', marginTop: '4px', fontWeight: 700 }}>우리 기업의 제품 1개당 재료비 {Math.round(market.materialUnitCost * market.materialCostMultiplier * getTechnologyMarketFit(company, market).material).toLocaleString()}원</small>
         </button>;
       })}</div>
-      {company.currentMarketId && company.currentMarketId !== selectedMarket.id && <div style={{ marginTop: '12px', padding: '12px', background: '#fef2f2', borderRadius: '10px', color: '#991b1b' }}><strong>기존 시장 퇴거 정산 필요</strong><p style={{ margin: '5px 0', fontSize: '12px' }}>기존 시장의 전용 기계와 재고를 정산한 뒤 새 시장에 진입합니다.</p><button type="button" onClick={settleMarketExit} disabled={submitting}>기존 시장 퇴거·자산 정산</button></div>}
+      {company.currentMarketId && company.currentMarketId !== selectedMarket.id && <div style={{ marginTop: '12px', padding: '12px', background: '#fef2f2', borderRadius: '10px', color: '#991b1b' }}><strong>기존 시장 퇴거 정산 필요</strong><p style={{ margin: '5px 0', fontSize: '12px' }}>기존 시장의 전용 기계와 재고를 정산한 뒤 새 시장에 진입합니다.</p><button type="button" onClick={() => { setSwitchTraitId(company.industryTraitId || ""); setMarketChangeTarget(selectedMarket); }} disabled={submitting}>기존 시장 퇴거·자산 정산</button></div>}
       {company.traitsConfirmed && <div style={{ marginTop: '12px', padding: '12px', background: '#fff7ed', borderRadius: '10px' }}><strong>신규 시장 진입 준비</strong><p style={{ margin: '5px 0', fontSize: '12px', color: '#9a3412' }}>기존 업종 경험을 유지하면 무료입니다. 다른 비교우위를 원하면 전문인력 영입·교육비 15,000원을 내고 경험을 교체할 수 있습니다.</p><div style={{ display: 'flex', gap: '8px' }}><select value={industryTraitId} onChange={(event) => setIndustryTraitId(event.target.value)} style={{ flex: 1 }}>{INDUSTRY_TRAITS.map((trait) => <option key={trait.id} value={trait.id}>{trait.icon} {trait.name}</option>)}</select><button type="button" disabled={submitting || industryTraitId === company.industryTraitId} onClick={purchaseIndustryChange}>15,000원 내고 변경</button></div></div>}
     </details>
 
     <div className="student-decision-columns">
     <div className="student-decision-left">
-    <section className="student-investment" style={card}><h2 style={{ marginTop: 0, fontSize: '18px' }}>설비와 기술에 투자할 것인가?</h2>
+    <section className="student-investment" style={{ ...card, display: room.currentRound >= Math.min(room.unlockRounds.machines, ...UPGRADE_OPTIONS.map(o => room.unlockRounds[o.id])) ? undefined : 'none' }}><h2 style={{ marginTop: 0, fontSize: '18px' }}>설비와 기술에 투자할 것인가?</h2>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '-2px 0 12px', padding: '10px 12px', background: '#eff6ff', borderRadius: '9px', color: '#1e3a8a' }}><span>현재 {selectedMarket.name} 기존 {selectedMarket.id === 'market_toy' ? '농기계' : '기계'}</span><strong>{quote.marketMachineCountBefore}대</strong></div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: '12px' }}>
+      <div style={{ display: room.currentRound >= room.unlockRounds.machines ? 'grid' : 'none', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: '12px' }}>
         <TouchStepper
           label={`새 ${selectedMarket.id === 'market_toy' ? '농기계' : '기계'} 구입`}
           value={room.currentRound < room.unlockRounds.machines ? 0 : machinePurchases}
@@ -719,7 +743,7 @@ export const StudentPage: React.FC = () => {
           description={`수리 가능 ${repairableMachines}대 · 감가율에 비례한 수리비 ${calculateMachineRepairCost(company, selectedMarket.id, machineRepairs, room.currentRound).toLocaleString()}원`}
         />
       </div>
-      <div style={{ marginTop: '12px' }}><strong>기업 업그레이드 — 한 라운드에 1개</strong><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: '9px', marginTop: '8px' }}>{UPGRADE_OPTIONS.map((option) => { const unlockRound = room.unlockRounds[option.id]; const level = company.upgrades?.[option.id] || 0; const locked = room.currentRound < unlockRound; return <button type="button" key={option.id} disabled={Boolean(plan) || locked || level >= 3} onClick={() => setUpgradePurchase((current) => current === option.id ? null : option.id)} style={{ textAlign: 'left', padding: '12px', borderRadius: '10px', border: upgradePurchase === option.id ? '2px solid #0f766e' : '1px solid #cbd5e1', background: upgradePurchase === option.id ? '#f0fdfa' : '#fff' }}><strong>{option.icon} {option.name} Lv.{level}/3</strong><small style={{ display: 'block', marginTop: '5px', color: '#475569' }}>{getUpgradeDescription(selectedMarket, option.id)}</small><b style={{ display: 'block', marginTop: '6px', color: locked ? '#b45309' : '#0f766e' }}>{locked ? `🔒 Round ${unlockRound} 해금` : level >= 3 ? '최대 단계' : upgradePurchase === option.id ? `선택됨 · 투자비 ${quote.upgradeCost.toLocaleString()}원` : '선택하여 효과·비용 확인'}</b></button>; })}</div></div>
+      <div style={{ marginTop: '12px' }}><strong>기업 업그레이드 — 한 라운드에 1개</strong><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: '9px', marginTop: '8px' }}>{UPGRADE_OPTIONS.filter(option => room.currentRound >= room.unlockRounds[option.id]).map((option) => { const unlockRound = room.unlockRounds[option.id]; const level = company.upgrades?.[option.id] || 0; const locked = room.currentRound < unlockRound; return <button type="button" key={option.id} disabled={Boolean(plan) || locked || level >= 3} onClick={() => setUpgradePurchase((current) => current === option.id ? null : option.id)} style={{ textAlign: 'left', padding: '12px', borderRadius: '10px', border: upgradePurchase === option.id ? '2px solid #0f766e' : '1px solid #cbd5e1', background: upgradePurchase === option.id ? '#f0fdfa' : '#fff' }}><strong>{option.icon} {option.name} Lv.{level}/3</strong><small style={{ display: 'block', marginTop: '5px', color: '#475569' }}>{getUpgradeDescription(selectedMarket, option.id)}</small><b style={{ display: 'block', marginTop: '6px', color: locked ? '#b45309' : '#0f766e' }}>{locked ? `🔒 Round ${unlockRound} 해금` : level >= 3 ? '최대 단계' : upgradePurchase === option.id ? `선택됨 · 투자비 ${quote.upgradeCost.toLocaleString()}원` : '선택하여 효과·비용 확인'}</b></button>; })}</div></div>
       <p style={{ fontSize: '13px', color: '#475569' }}>선택한 투자는 이번 생산계획부터 적용되고 이후 라운드에도 유지됩니다. 고급 설비는 기계가 여러 대일수록 효과가 커집니다.</p>
     </section>
 
@@ -772,7 +796,7 @@ export const StudentPage: React.FC = () => {
         </div>
       </div>
     </section>
-    <section className="student-finance" style={card}><details open={room.currentRound >= room.unlockRounds.loans}><summary style={{ cursor: 'pointer', fontWeight: 800, fontSize: '18px' }}>🏦 선택 활동: 은행 대출 {room.currentRound < room.unlockRounds.loans && '🔒'}</summary>{room.currentRound < room.unlockRounds.loans ? <p style={{ color: '#64748b', fontSize: '13px' }}>Round {room.unlockRounds.loans}부터 열립니다. 대출은 생산의 핵심 활동이 아니라 금리 변화가 투자와 공급에 미치는 영향을 살펴보는 확장 기능입니다.</p> : <><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: '7px', marginTop: '12px', fontSize: '13px' }}><span>인정 자산 <b style={{ float: 'right' }}>{loanTerms.recognizedAssets.toLocaleString()}원</b></span><span>현재 대출잔액 <b style={{ float: 'right' }}>{(company.loanBalance || 0).toLocaleString()}원</b></span><span>추가 대출 가능액 <b style={{ float: 'right' }}>{loanTerms.availableLoan.toLocaleString()}원</b></span><span>적용 연이율 <b style={{ float: 'right' }}>{(company.loanAnnualRate || loanTerms.annualRate).toFixed(1)}%</b></span><span>라운드 이자 <b style={{ float: 'right' }}>{loanTerms.roundInterest.toLocaleString()}원</b></span><span>상환 예정 라운드 <b style={{ float: 'right' }}>{company.loanDueRound ? `R${company.loanDueRound}` : '-'}</b></span></div>
+    <section className="student-finance" style={{ ...card, display: room.currentRound >= room.unlockRounds.loans ? undefined : 'none' }}><details open={room.currentRound >= room.unlockRounds.loans}><summary style={{ cursor: 'pointer', fontWeight: 800, fontSize: '18px' }}>🏦 선택 활동: 은행 대출 {room.currentRound < room.unlockRounds.loans && '🔒'}</summary>{room.currentRound < room.unlockRounds.loans ? <p style={{ color: '#64748b', fontSize: '13px' }}>Round {room.unlockRounds.loans}부터 열립니다. 대출은 생산의 핵심 활동이 아니라 금리 변화가 투자와 공급에 미치는 영향을 살펴보는 확장 기능입니다.</p> : <><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: '7px', marginTop: '12px', fontSize: '13px' }}><span>인정 자산 <b style={{ float: 'right' }}>{loanTerms.recognizedAssets.toLocaleString()}원</b></span><span>현재 대출잔액 <b style={{ float: 'right' }}>{(company.loanBalance || 0).toLocaleString()}원</b></span><span>추가 대출 가능액 <b style={{ float: 'right' }}>{loanTerms.availableLoan.toLocaleString()}원</b></span><span>적용 연이율 <b style={{ float: 'right' }}>{(company.loanAnnualRate || loanTerms.annualRate).toFixed(1)}%</b></span><span>라운드 이자 <b style={{ float: 'right' }}>{loanTerms.roundInterest.toLocaleString()}원</b></span><span>상환 예정 라운드 <b style={{ float: 'right' }}>{company.loanDueRound ? `R${company.loanDueRound}` : '-'}</b></span></div>
       <div style={{ marginTop: '12px' }}>
         <TouchStepper
           label="대출 및 상환 희망 금액"
@@ -805,7 +829,7 @@ export const StudentPage: React.FC = () => {
     <div className="student-decision-right">
     <div className="student-sale-stack">
     <section className="student-sale" style={{ ...card, border: '2px solid #7c3aed' }}><h2 style={{ marginTop: 0, fontSize: '18px' }}>시장별 판매 방식</h2>
-      <label style={{ display: 'block', marginBottom: '10px' }}>가격 방향 예측<select value={pricePrediction} disabled={Boolean(plan)} onChange={(event) => changePricePrediction(event.target.value as 'UP' | 'SAME' | 'DOWN')} style={{ width: '100%', marginTop: '6px', padding: '9px' }}><option value="UP">상승 — 이전 가격 이상만 조정</option><option value="SAME">유지 — 이전 가격 ±5%만 조정</option><option value="DOWN">하락 — 이전 가격 이하만 조정</option></select></label>
+      <label style={{ display: 'block', marginBottom: '10px' }}>가격 방향 예측<select value={pricePrediction} disabled={Boolean(plan) || !isDecision} onChange={(event) => changePricePrediction(event.target.value as 'UP' | 'SAME' | 'DOWN')} style={{ width: '100%', marginTop: '6px', padding: '9px' }}><option value="UP">상승 — 이전 가격 이상만 조정</option><option value="SAME">유지 — 이전 가격 ±5%만 조정</option><option value="DOWN">하락 — 이전 가격 이하만 조정</option></select></label>
       {selectedMarket.priceControl === 'MARKET_PRICE' ? <p style={{ fontSize: '13px', color: '#64748b' }}>현재 라운드의 거래가격은 공개되지 않습니다. 신문과 판매 여부를 살펴보고 판매 가능한 최저 희망가격을 정하세요.</p> : <p style={{ fontSize: '13px', color: '#64748b' }}>스마트폰 과점시장에서는 낮은 가격 기업부터 판매되고, 남은 수요를 다음 기업이 가져갑니다.</p>}
       <div style={{ padding: '14px', background: '#f5f3ff', borderRadius: '10px', display: 'flex', justifyContent: 'space-between' }}><span>{publicPriceLabel}</span><strong style={{ color: '#7c3aed' }}>{publicReferencePrice.toLocaleString()}원/{quantityUnit}</strong></div>
       <div style={{ marginTop: '14px' }}>
@@ -818,7 +842,7 @@ export const StudentPage: React.FC = () => {
           buttonStep={10}
           unit="원"
           color="purple"
-          disabled={room.status === 'FINISHED'}
+          disabled={room.status === 'FINISHED' || room.roundPhase === 'RESULT' || room.roundPhase === 'SETTLING' || (Boolean(plan) && room.roundPhase !== 'SELLING')}
           onChange={(val) => {
             setAskingPrice(val);
             if (plan) void applyAskingPrice(val);
@@ -841,7 +865,7 @@ export const StudentPage: React.FC = () => {
           step={1}
           unit={quantityUnit}
           color="purple"
-          disabled={maximumSellableQuantity === 0}
+          disabled={maximumSellableQuantity === 0 || (!isDecision && room.roundPhase !== 'SELLING')}
           onChange={(val) => applyOfferedQuantity(val)}
           quickPresets={[
             { label: '전량 보관 (0)', value: 0 },
@@ -914,6 +938,7 @@ export const StudentPage: React.FC = () => {
         <span>예상 영업이익<ConceptHelp concept="영업이익" /> <b style={{ float: 'right', color: expectedOperatingProfit >= 0 ? '#059669' : '#dc2626' }}>{expectedOperatingProfit.toLocaleString()}원</b></span>
       </div>
       {!plan && remainingBudget < 0 && <p style={{ color: '#dc2626', fontWeight: 700 }}>지출 한도를 {Math.abs(remainingBudget).toLocaleString()}원 초과했습니다.</p>}
+      {confirmReason && <p role="status" style={{ padding: 12, background: "#eff6ff", borderRadius: 10 }}>{confirmReason}</p>}
       <button onClick={confirmProduction} disabled={!canConfirm} style={{ width: '100%', padding: '13px', marginTop: '15px', border: 0, borderRadius: '9px', background: canConfirm ? '#2563eb' : '#cbd5e1', color: '#fff', fontWeight: 800 }}>{plan ? `Round ${plan.roundNumber} 생산 결정 완료` : !isDecision ? '기업 선택 시간이 아닙니다' : submitting ? '확정 중...' : '생산 결정 확정'}</button>
       {message && <p style={{ textAlign: 'center', color: plan ? '#15803d' : '#b45309' }}>{message}</p>}
     </section>

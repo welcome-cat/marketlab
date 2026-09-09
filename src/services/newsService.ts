@@ -12,7 +12,7 @@ const signals: Record<string, string[]> = {
   income_down: ['생활비 부담을 의식해 장바구니를 신중하게 꾸리는 소비자가 늘었다', '가계가 당분간 꼭 필요한 지출을 중심으로 소비 계획을 세우고 있다', '소비자들이 지출 시기를 늦추거나 비교 구매에 나서는 모습이다'],
   preference_up: ['온라인 커뮤니티와 영상 플랫폼에서 관련 제품을 소개하는 게시물이 빠르게 퍼지고 있다', '최근 거리와 학교 주변에서 관련 제품을 찾는 사람이 부쩍 눈에 띈다', '새로운 생활 방식이 주목받으며 관련 제품이 자주 언급되고 있다'],
   preference_down: ['온라인을 중심으로 해당 상품을 사지 않겠다는 움직임이 빠르게 번지고 있다', '일부 소비자 단체가 당분간 구매를 미루자는 목소리를 내고 있다', '판매 현장에서는 방문객이 제품을 살펴보고도 발길을 돌리는 사례가 늘었다'],
-  substitute_up: ['비슷한 용도로 사용되는 상품의 원료비와 유통가격이 잇따라 조정되고 있다', '경쟁 품목의 가격표가 바뀌면서 소비자들의 비교 검색이 활발해졌다', '대체 가능한 제품군에서 가격 부담을 호소하는 반응이 늘고 있다'],
+  substitute_up: ['우리 시장의 상품과 유사한 용도로 사용되는 재화의 가격이 올라가고 있다', '경쟁 품목의 가격표가 바뀌면서 소비자들의 비교 검색이 활발해질 것으로 예측된다', '대체 가능한 제품군에서 가격 부담을 호소하는 반응이 늘고 있다'],
   substitute_down: ['비슷한 용도로 쓰이는 경쟁 상품이 잇따라 할인 행사에 들어갔다', '소비자들이 저렴해진 경쟁 품목과 가격을 비교하는 모습이 늘었다'],
   complement_up: ['함께 사용하는 주변 제품의 가격이 오르면서 묶음 구매를 고민하는 소비자가 늘었다', '관련 액세서리와 서비스 요금이 조정돼 전체 이용비용이 커졌다는 평가다', '제품 이용에 필요한 부가 품목의 가격표가 잇따라 바뀌고 있다'],
   complement_down: ['함께 사용하는 주변 제품의 가격이 낮아지면서 묶음 구매 부담이 줄었다', '관련 액세서리와 서비스 비용이 내려 제품을 함께 마련하려는 소비자가 눈에 띈다'],
@@ -172,7 +172,7 @@ export const getRecoveryMessage = (
       direction: matched.defaultDirection,
       reason: matched.defaultReason,
       headline: matched.defaultHeadline,
-      body: matched.defaultBody,
+      body: matched.defaultBody.split(/(?<=[.!?])\s+/).slice(0, 2).join('\n'),
     };
   }
   const fallbackReason = `지난 라운드의 ‘${fallbackTitle || '일시적 충격'}’ 영향이 사라졌습니다`;
@@ -206,21 +206,14 @@ export const defaultNewsTemplates = (): Record<string, { headline: string; body:
           baseline: '소비자 리포트…평소와 비슷한 구매 흐름 이어져',
           supply_baseline: '생산 동향…원료 조달과 출하 일정 평소 수준 유지',
         } as Record<string, string>)[option.id] || `${option.title}, 시장 참여자 움직임에 변수`,
-        body: [
-          option.effectType === 'SUPPLY' ? '최근 생산과 출하 현장에서 평소와 다른 움직임이 관찰되고 있다.' : '최근 소비 현장에서 평소와 다른 움직임이 관찰되고 있다.',
-          `${signalFor(option, 0)}.`,
-          `${signalFor(option, 1)}.`,
-          option.effectType === 'SUPPLY' ? '업체들은 비용과 생산능력, 시장에 내놓을 물량을 다시 계산하고 있다.' : '유통업계는 방문객 수와 구매 시기, 상품 비교 방식의 변화를 주시하고 있다.',
-          option.effectType === 'SUPPLY' ? '도매시장 관계자들은 실제 출하 물량이 확인될 때까지 상황을 지켜봐야 한다고 전했다.' : '아직 실제 거래 결과가 나오지 않아 소비자의 최종 선택을 단정하기는 이르다.',
-          '시장 참여 기업들은 기사 속 단서를 바탕으로 다음 거래의 가격과 물량 전략을 세워야 할 것으로 보인다.',
-        ].join('\n'),
+        body: [signalFor(option, 0), signalFor(option, 1)].map(line => line.replace(/[.!?]+$/, '') + '.').join('\n'),
       }]),
   );
 
   const recoveryTemplates = Object.fromEntries(
     RECOVERY_TEMPLATE_OPTIONS.map((item) => [item.templateKey, {
       headline: item.defaultHeadline,
-      body: item.defaultBody,
+      body: item.defaultBody.split(/(?<=[.!?])\s+/).slice(0, 2).join('\n'),
     }])
   );
 
@@ -231,20 +224,7 @@ export const composeEventArticle = (market: Market, option: DemandEventOption, s
   headline: section === 'CONSUMER'
     ? `${market.name} 소비자 리포트…구매 현장에 포착된 변화`
     : `${market.name} 생산 동향…업계의 비용과 출하 여건 주목`,
-  body: [
-    section === 'CONSUMER'
-      ? `최근 ${market.name}의 소비 현장에서 눈여겨볼 움직임이 관찰되고 있다.`
-      : `최근 ${market.name}의 생산과 출하 현장에서 새로운 움직임이 관찰되고 있다.`,
-    `${signalFor(option, 0)}.`,
-    `${signalFor(option, 1)}.`,
-    section === 'CONSUMER'
-      ? '유통업계는 방문객 수와 구매 시기, 상품을 비교하는 방식이 이전과 달라지는지 살피고 있다.'
-      : '생산업체들은 비용과 생산능력, 시장에 내놓을 물량을 다시 계산하고 있다.',
-    section === 'CONSUMER'
-      ? '아직 실제 거래 결과가 나오지 않아 소비자의 최종 선택을 단정하기는 이르다.'
-      : '도매시장 관계자들은 실제 출하 물량이 확인될 때까지 상황을 지켜봐야 한다고 전했다.',
-    '시장 참여 기업들은 기사에 나타난 행동의 변화를 바탕으로 다음 거래를 준비해야 할 것으로 보인다.',
-  ].join('\n'),
+  body: defaultNewsTemplates()[option.id].body,
   generatedBy: 'TEMPLATE',
 });
 
