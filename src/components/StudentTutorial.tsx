@@ -41,7 +41,7 @@ export function StudentTutorial({ phase }: { phase: string }) {
       if (node instanceof HTMLDetailsElement) { details.push([node, node.open]); node.open = true; }
     }
     dialog.current?.showModal();
-    target.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
+    target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
     panel.current?.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
     let frame = 0;
     const position = () => {
