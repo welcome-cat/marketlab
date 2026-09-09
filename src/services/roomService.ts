@@ -191,7 +191,7 @@ export const removeExpiredTemporaryEffects = (markets: Market[], previousEvents:
   };
 });
 
-const withRecoveryNews = (events: DemandEvent[], previousEvents: DemandEvent[], templates?: Record<string, { headline: string; body: string }>) => events.map((event) => {
+export const withRecoveryNews = (events: DemandEvent[], previousEvents: DemandEvent[], templates?: Record<string, { headline: string; body: string }>) => events.map((event) => {
   const previous = previousEvents.find((item) => item.marketId === event.marketId);
   const recovered: Array<{ direction: string; reason: string; headline: string; body: string }> = [];
   if (isTemporaryDemandEvent(previous)) recovered.push(getRecoveryMessage(previous?.optionId, previous?.title, templates));

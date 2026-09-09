@@ -1,3 +1,4 @@
+import { getPublishedNewspaper } from '../services/newsService';
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { FirmSupplyCurve } from '../components/FirmSupplyCurve';
@@ -332,7 +333,7 @@ export const StudentPage: React.FC = () => {
   const canConfirm = isDecision && !plan && !submitting && company.traitsConfirmed !== false && (!company.currentMarketId || company.currentMarketId === selectedMarket.id) && (plannedProductionQty > 0 || isRiceMarket) && workerCount >= 1 && workerCount <= cashLimitedWorkerCount && quote.currentMarginalProduct > 0 && plannedProductionQty <= cashLimitedCapacity && remainingBudget >= 0 && quote.machineCountAfter <= selectedMarket.maxMachines;
   const confirmReason = room.roundPhase === 'RESULT' ? '판매가 종료되었습니다. 거래 결과를 확인하고 다음 라운드를 기다려주세요. 희망가격은 이전 거래가격, 가격 방향 예측은 유지로 준비됩니다.' : room.roundPhase === 'SELLING' && plan ? '생산계획은 확정되어 변경할 수 없습니다. 판매 진행 타일에서 거래 여부와 희망가격을 확인하세요.' : plan ? '이번 라운드의 생산 준비가 완료되었습니다. 고용·투자·생산량은 바꿀 수 없습니다. 판매가 시작되면 판매 타일에서 희망가격을 조절하세요.' : !isDecision ? '현재는 생산 결정 시간이 아닙니다. 교사의 다음 라운드 진행을 기다려주세요.' : company.traitsConfirmed === false ? '진단서에서 기업 특성을 먼저 확정해주세요.' : company.currentMarketId && company.currentMarketId !== selectedMarket.id ? '기존 시장의 자산 정산이 필요합니다.' : remainingBudget < 0 ? '생산비가 보유 현금을 초과했습니다.' : plannedProductionQty <= 0 && !isRiceMarket ? '희망 생산량을 1개 이상 선택해주세요.' : !canConfirm ? '고용 인원과 생산량을 생산능력·현금 한도 안으로 조정해주세요.' : '';
   const marginalCostLabel = (effectiveMarginalCost === null || effectiveMarginalCost === undefined) ? '생산 불가' : `${effectiveMarginalCost.toLocaleString()}원/개`;
-  const newspaperEvents = room.pendingDemandEvents.length > 0 ? room.pendingDemandEvents : room.demandEvents;
+  const newspaperEvents = getPublishedNewspaper(room);
   const newspaperRound = room.pendingDemandEvents.length > 0 && room.status === 'RUNNING' ? room.currentRound + 1 : room.currentRound;
   const hasNewspaper = newspaperEvents.some((e) => Boolean(e.marketId && (e.articleHeadline || e.supplyArticleHeadline)));
   const newlyUnlockedList = getNewlyUnlockedFeatures(room.currentRound, room.unlockRounds);
@@ -659,6 +660,7 @@ export const StudentPage: React.FC = () => {
 
     <details ref={newsPanelRef} className="student-news" style={{ ...card, border: '2px solid #d97706', background: '#fffbeb' }}>
       <summary style={{ cursor: 'pointer' }}><div style={{ display: 'inline-flex', width: 'calc(100% - 20px)', justifyContent: 'space-between', gap: '10px', alignItems: 'center', verticalAlign: 'middle' }}><div><small style={{ color: '#92400e', fontWeight: 900 }}>MARKETLAB ECONOMY</small><h2 style={{ margin: '3px 0', fontFamily: 'Georgia, serif' }}>📰 Round {newspaperRound} 시장 신문</h2></div><span style={{ color: '#92400e', fontSize: '12px' }}>눌러서 기사 확대·축소</span></div></summary>
+      {room.status === 'WAITING' && newspaperEvents.length === 0 && <p role="status">신문 발행 대기 중입니다. 교사가 발행하면 라운드 시작 전에도 여기에서 확인할 수 있습니다.</p>}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: '12px', marginTop: '13px' }}>{newspaperEvents.map((event) => { const market = room.markets.find((item) => item.id === event.marketId); return <article key={event.marketId} style={{ padding: '15px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: '10px' }}><small style={{ color: '#64748b', fontWeight: 800 }}>{market?.icon} {market?.name}</small><section className="news-section"><b>🛒 소비자 리포트</b><h3 style={{ margin: '7px 0', fontSize: '17px', fontFamily: 'Georgia, serif' }}>{event.articleHeadline}</h3><p style={{ margin: 0, lineHeight: 1.65, color: '#334155', fontSize: '13px' }}>{event.articleBody}</p></section><section className="news-section"><b>🏭 생산 동향</b><h3 style={{ margin: '7px 0', fontSize: '17px', fontFamily: 'Georgia, serif' }}>{event.supplyArticleHeadline || `${market?.name || '시장'} 생산 현장, 평소 흐름 이어져`}</h3><p style={{ margin: 0, lineHeight: 1.65, color: '#334155', fontSize: '13px' }}>{event.supplyArticleBody || event.supplyDescription || '생산과 출하 현장에서는 뚜렷한 변화가 관찰되지 않고 있다.'}</p></section></article>; })}</div>
     </details>
 

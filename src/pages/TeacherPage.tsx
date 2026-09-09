@@ -1,4 +1,4 @@
-import { transitionMarkets } from '../services/roomService';
+import { transitionMarkets, withRecoveryNews } from '../services/roomService';
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { calculateMarketClearing, companyService, productionService, reflectionService, roomService, scaleMarketEventFactor } from '../services';
@@ -55,6 +55,7 @@ export const TeacherPage: React.FC = () => {
   const [materialPriceDraft, setMaterialPriceDraft] = useState<Record<string, number>>({});
   const [wageDraft, setWageDraft] = useState<Record<string, number>>({});
   const [rentDraft, setRentDraft] = useState<Record<string, number>>({});
+  const [publishedNewsKey, setPublishedNewsKey] = useState<string | null>(null);
   const [newsGenerating, setNewsGenerating] = useState(false);
   const [newsMessage, setNewsMessage] = useState<string | null>(null);
   const [newsEdits, setNewsEdits] = useState<Record<string, { headline?: string; body?: string; supplyHeadline?: string; supplyBody?: string }>>({});
@@ -270,6 +271,9 @@ export const TeacherPage: React.FC = () => {
   const openRoom = (room: Room) => {
     eventDraftRoundKey.current = `${room.id}:${room.currentRound}`;
     setActiveRoom(room);
+    setNewsEdits({});
+    setNewsMessage(null);
+    setPublishedNewsKey(null);
     setUnlockDraft(room.unlockRounds);
     setQuizDraft(room.economicsQuizzes);
     setQuizScheduleDraft(room.quizSchedule || {});
@@ -298,16 +302,7 @@ export const TeacherPage: React.FC = () => {
     setSupplySelections(Object.fromEntries(activeRoom.markets.map((market) => [market.id, supplyChoices.filter((option) => option.id !== 'rice_typhoon' || market.id === 'market_toy')[Math.floor(Math.random() * supplyChoices.filter((option) => option.id !== 'rice_typhoon' || market.id === 'market_toy').length)].id])));
   };
 
-  const handleConfirmDemandEvents = async () => {
-    if (!activeRoom) return;
-    if (!canPrepareDemandEvents) {
-      setNewsMessage('신문은 수업 시작 전 또는 현재 라운드의 거래 결과가 확정된 뒤에만 발행할 수 있습니다.');
-      return;
-    }
-    try {
-      setNewsGenerating(true);
-      setNewsMessage(null);
-      const events = await Promise.all(activeRoom.markets.map(async (market): Promise<DemandEvent> => {
+  const draftEvents: DemandEvent[] = activeRoom ? activeRoom.markets.map((market): DemandEvent => {
         const option = DEMAND_EVENT_OPTIONS.find((item) => item.id === demandSelections[market.id]) || DEMAND_EVENT_OPTIONS.find((item) => item.id === 'baseline')!;
         const supplyOption = DEMAND_EVENT_OPTIONS.find((item) => item.id === supplySelections[market.id]) || DEMAND_EVENT_OPTIONS.find((item) => item.id === 'supply_baseline')!;
         const demandIntensity = demandIntensities[market.id] || 'MEDIUM';
@@ -318,9 +313,28 @@ export const TeacherPage: React.FC = () => {
         const demandArticle = composeEventArticle(market, option, 'CONSUMER');
         const supplyArticle = composeEventArticle(market, supplyOption, 'PRODUCTION');
         return { marketId: market.id, optionId: option.id, factor: option.factor, effectType: 'DEMAND', title: option.title, description: option.description, multiplier: option.multiplier, ecoPreferenceBoost: option.ecoPreferenceBoost || 0, demandIntensity, supplyIntensity, supplyOptionId: supplyOption.id, supplyFactor: supplyOption.factor, supplyTitle: supplyOption.title, supplyDescription: supplyOption.description, supplyMaterialMultiplier: supplyOption.id.startsWith('material_') && materialPriceDraft[market.id] ? materialPriceDraft[market.id] / Math.max(1, market.materialUnitCost * market.materialCostMultiplier) : supplyOption.materialMultiplier || 1, supplyWageMultiplier: supplyOption.id.startsWith('wage_') && wageDraft[market.id] ? wageDraft[market.id] / Math.max(1, market.wagePerWorker) : supplyOption.wageMultiplier || 1, supplyRentMultiplier: supplyOption.id.startsWith('rent_') && rentDraft[market.id] ? rentDraft[market.id] / Math.max(1, market.rentPerRound) : 1, supplyProductivityMultiplier: supplyOption.productivityMultiplier || 1, supplyCurveMultiplier: isTaxPolicy ? 1 : supplyOption.supplyMultiplier || 1, producerTaxPerUnit: supplyOption.id === 'producer_tax' ? Math.max(0, taxDraft[market.id] || 0) : 0, producerSubsidyPerUnit: supplyOption.id === 'producer_subsidy' ? Math.max(0, subsidyDraft[market.id] || 0) : 0, disasterLossChance: supplyOption.id === 'rice_typhoon' ? Math.max(0, Math.min(1, (disasterChanceDraft[market.id] || 40) / 100)) : 0, disasterLossRate: supplyOption.id === 'rice_typhoon' ? Math.max(0, Math.min(1, (disasterLossDraft[market.id] || 30) / 100)) : 0, articleHeadline: edit?.headline?.trim() || demandTemplate?.headline || demandArticle.headline, articleBody: edit?.body?.trim() || demandTemplate?.body || demandArticle.body, supplyArticleHeadline: edit?.supplyHeadline?.trim() || supplyTemplate?.headline || supplyArticle.headline, supplyArticleBody: edit?.supplyBody?.trim() || supplyTemplate?.body || supplyArticle.body, generatedBy: 'TEMPLATE' };
-      }));
+      }) : [];
+
+  const publicationEvents = withRecoveryNews(draftEvents, activeRoom?.status === 'RUNNING' ? activeRoom.demandEvents : [], newsTemplateDraft);
+  const publicationKey = JSON.stringify([activeRoom?.id, activeRoom?.currentRound, publicationEvents, marketInfluenceDraft]);
+  const matchesSavedNews = publicationEvents.length > 0 && publicationEvents.length === activeRoom?.pendingDemandEvents.length && publicationEvents.every(event => {
+    const saved = activeRoom.pendingDemandEvents.find(item => item.marketId === event.marketId);
+    return saved && Object.entries(event).every(([key, value]) => saved[key as keyof DemandEvent] === value);
+  });
+  const isNewsPublished = publishedNewsKey === publicationKey || matchesSavedNews;
+  const handleConfirmDemandEvents = async () => {
+    if (!activeRoom || newsGenerating || isNewsPublished) return;
+    if (!canPrepareDemandEvents) {
+      setNewsMessage('신문은 수업 시작 전 또는 현재 라운드의 거래 결과가 확정된 뒤에만 발행할 수 있습니다.');
+      return;
+    }
+    try {
+      setNewsGenerating(true);
+      setNewsMessage(null);
+      const events = publicationEvents;
       await roomService.updateMarketInfluence(activeRoom.id, marketInfluenceDraft);
       await roomService.confirmDemandEvents(activeRoom.id, events);
+      setPublishedNewsKey(publicationKey);
       setNewsMessage(`Round ${activeRoom.status === 'WAITING' ? activeRoom.currentRound : activeRoom.currentRound + 1} 시장 신문이 발행되었습니다.`);
     } catch (error) {
       const code = error instanceof Error ? error.message : '';
@@ -608,7 +622,9 @@ export const TeacherPage: React.FC = () => {
         <section className="teacher-demand-events" style={{ ...card, border: '2px solid #d97706', background: '#fffbeb' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'start', flexWrap: 'wrap' }}>
             <div><h3 style={{ margin: 0 }}>📰 다음 시장 신문 준비(선택)</h3><p style={{ margin: '6px 0', color: '#92400e', fontSize: '13px' }}>몇 라운드마다 충격을 주고 싶을 때만 발행하세요. 발행하지 않으면 다음 라운드는 자동으로 ‘변화 없음’이 적용됩니다.</p></div>
-            <div className="teacher-news-actions" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}><button className="news-template-button" onClick={() => { setNewsTemplateDraft((current) => mergeNewsTemplates(current)); setShowNewsTemplates(true); }}>🗂 상황별 원고 확인·편집</button><button disabled={newsGenerating || !canPrepareDemandEvents} onClick={handleRandomDemandEvents}>🎲 수요·공급 사건 무작위 선택</button><button onClick={() => setShowForecast(true)}>🔍 예측 확인</button><button disabled={newsGenerating || !canPrepareDemandEvents} onClick={handleConfirmDemandEvents} style={{ background: '#d97706', color: '#fff', border: 0, borderRadius: '8px', padding: '10px 14px', fontWeight: 800 }}>{newsGenerating ? '기사 작성 중...' : '선택 확정·신문 발행'}</button></div>
+            <div className="teacher-news-actions" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}><button className="news-template-button" onClick={() => { setNewsTemplateDraft((current) => mergeNewsTemplates(current)); setShowNewsTemplates(true); }}>🗂 상황별 원고 확인·편집</button><button disabled={newsGenerating || !canPrepareDemandEvents} onClick={handleRandomDemandEvents}>🎲 수요·공급 사건 무작위 선택</button><button onClick={() => setShowForecast(true)}>🔍 예측 확인</button><button disabled={newsGenerating || isNewsPublished || !canPrepareDemandEvents} onClick={handleConfirmDemandEvents} style={{ background: '#d97706', color: '#fff', border: 0, borderRadius: '8px', padding: '10px 14px', fontWeight: 800 }}>{newsGenerating ? '발행 중...' : isNewsPublished ? '✓ 발행 완료' : '선택 확정·신문 발행'}</button></div>
+          {newsMessage && (!newsMessage.includes('발행되었습니다') || isNewsPublished) && <p role="status" style={{ padding: '10px 12px', margin: '12px 0 0', borderRadius: '8px', background: newsMessage.includes('발행되었습니다') ? '#dcfce7' : '#fee2e2', color: newsMessage.includes('발행되었습니다') ? '#166534' : '#991b1b', fontWeight: 700 }}>{newsMessage}</p>}
+          <p role="status" style={{ color: '#92400e', fontSize: '13px' }}>{isNewsPublished ? '학생 신문에 반영되었습니다. 사건이나 원고를 수정하면 다시 발행할 수 있습니다.' : '아래 내용은 발행 전 초안입니다. 발행 버튼을 눌러야 학생 신문에 반영됩니다.'}</p>
           </div>
           {!canPrepareDemandEvents && <p role="status" style={{ padding: '10px 12px', borderRadius: '8px', background: '#fef3c7', color: '#92400e', fontWeight: 700 }}>현재 라운드가 진행 중입니다. 판매 결과를 확정하면 다음 라운드의 수요·공급 사건과 변화 크기를 설정하고 신문을 발행할 수 있습니다.</p>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))', gap: '12px', marginTop: '14px' }}>{activeRoom.markets.map((market) => {
@@ -617,33 +633,16 @@ export const TeacherPage: React.FC = () => {
 
             // 지난 라운드의 단기 충격 해소 여부 확인
             const prevEvent = activeRoom.demandEvents.find((item) => item.marketId === market.id);
-            const prevDemandTemp = Boolean(DEMAND_EVENT_OPTIONS.find((o) => o.id === prevEvent?.optionId)?.temporary);
-            const prevSupplyTemp = Boolean(DEMAND_EVENT_OPTIONS.find((o) => o.id === prevEvent?.supplyOptionId)?.temporary);
+            const prevDemandTemp = activeRoom.status === 'RUNNING' && Boolean(DEMAND_EVENT_OPTIONS.find((o) => o.id === prevEvent?.optionId)?.temporary);
+            const prevSupplyTemp = activeRoom.status === 'RUNNING' && Boolean(DEMAND_EVENT_OPTIONS.find((o) => o.id === prevEvent?.supplyOptionId)?.temporary);
             const recoveryItems: Array<{ direction: string; reason: string; headline: string; body: string }> = [];
             if (prevDemandTemp) recoveryItems.push(getRecoveryMessage(prevEvent?.optionId, prevEvent?.title, activeRoom.newsTemplates || newsTemplateDraft));
             if (prevSupplyTemp) recoveryItems.push(getRecoveryMessage(prevEvent?.supplyOptionId, prevEvent?.supplyTitle, activeRoom.newsTemplates || newsTemplateDraft));
             const hasRecovery = recoveryItems.length > 0;
-            const recoverySummary = recoveryItems.map((r) => `${r.direction}: ${r.reason}`).join(' · ');
-            const recoveryBodyPrefix = recoveryItems.map((r) => r.body).join(' ');
-
-            const baseConsumerArticle = composeEventArticle(market, selectedOption, 'CONSUMER');
-            const consumerTemplate = newsTemplateDraft[selectedOption.id];
-            const consumerHeadline = consumerTemplate?.headline || baseConsumerArticle.headline;
-            const consumerBody = consumerTemplate?.body || baseConsumerArticle.body;
-            const defaultArticle = hasRecovery ? {
-              headline: `${recoverySummary} — ${consumerHeadline}`,
-              body: `${recoveryBodyPrefix} ${consumerBody}`,
-            } : {
-              headline: consumerHeadline,
-              body: consumerBody,
-            };
-
-            const baseSupplyArticle = composeEventArticle(market, selectedSupplyOption, 'PRODUCTION');
-            const supplyTemplate = newsTemplateDraft[selectedSupplyOption.id];
-            const defaultSupplyArticle = {
-              headline: supplyTemplate?.headline || baseSupplyArticle.headline,
-              body: supplyTemplate?.body || baseSupplyArticle.body,
-            };
+            const recoverySummary = recoveryItems.map((item) => `${item.direction}: ${item.reason}`).join(' · ');
+            const preview = publicationEvents.find((event) => event.marketId === market.id)!;
+            const defaultArticle = { headline: preview.articleHeadline, body: preview.articleBody };
+            const defaultSupplyArticle = { headline: preview.supplyArticleHeadline, body: preview.supplyArticleBody };
             const supplyOptions = DEMAND_EVENT_OPTIONS.filter((option) => option.effectType === 'SUPPLY' && (option.id !== 'rice_typhoon' || market.id === 'market_toy'));
             return <article key={market.id} style={{ background: '#fff', padding: '13px', borderRadius: '10px', border: hasRecovery ? '2px solid #f59e0b' : '1px solid #fcd34d' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -667,8 +666,8 @@ export const TeacherPage: React.FC = () => {
               <details className="news-editor"><summary>✏️ 소비자·생산 원고 확인·직접 편집</summary><p style={{ color: '#64748b', fontSize: '12px' }}>수요 사건은 소비자 리포트에, 공급 사건은 생산 동향에 각각 실립니다.{hasRecovery ? ' (지난 라운드 단기 충격 정상화 문구가 포함되어 있습니다.)' : ''}</p><h4>🛒 소비자 리포트</h4><label>기사 제목<input value={newsEdits[market.id]?.headline ?? defaultArticle.headline} onChange={(event) => setNewsEdits((current) => ({ ...current, [market.id]: { ...current[market.id], headline: event.target.value } }))} /></label><label>기사 내용<textarea rows={7} value={newsEdits[market.id]?.body ?? defaultArticle.body} onChange={(event) => setNewsEdits((current) => ({ ...current, [market.id]: { ...current[market.id], body: event.target.value } }))} /></label><h4>🏭 생산 동향</h4><label>기사 제목<input value={newsEdits[market.id]?.supplyHeadline ?? defaultSupplyArticle.headline} onChange={(event) => setNewsEdits((current) => ({ ...current, [market.id]: { ...current[market.id], supplyHeadline: event.target.value } }))} /></label><label>기사 내용<textarea rows={7} value={newsEdits[market.id]?.supplyBody ?? defaultSupplyArticle.body} onChange={(event) => setNewsEdits((current) => ({ ...current, [market.id]: { ...current[market.id], supplyBody: event.target.value } }))} /></label></details>
             </article>;
           })}</div>
-          {newsMessage && <p role="status" style={{ padding: '10px 12px', margin: '12px 0 0', borderRadius: '8px', background: newsMessage.includes('발행되었습니다') ? '#dcfce7' : '#fee2e2', color: newsMessage.includes('발행되었습니다') ? '#166534' : '#991b1b', fontWeight: 700 }}>{newsMessage}</p>}
-          {activeRoom.pendingDemandEvents.length > 0 && <div style={{ marginTop: '16px' }}><strong>발행된 신문 미리보기</strong><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(250px,1fr))', gap: '10px', marginTop: '9px' }}>{activeRoom.pendingDemandEvents.map((event) => { const market = activeRoom.markets.find((item) => item.id === event.marketId); return <article key={event.marketId} style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '14px' }}><small style={{ color: '#92400e', fontWeight: 800 }}>{market?.icon} {market?.name} · 교사용 정답: 수요 {event.title} ({EVENT_INTENSITY_LABEL[event.demandIntensity || 'MEDIUM']}) / 공급 {event.supplyTitle || '변화 없음'} ({EVENT_INTENSITY_LABEL[event.supplyIntensity || 'MEDIUM']})</small><h4 style={{ margin: '7px 0' }}>{event.articleHeadline}</h4><p style={{ margin: 0, color: '#475569', fontSize: '13px', lineHeight: 1.6 }}>{event.articleBody}</p><small style={{ display: 'block', marginTop: '8px', color: '#94a3b8' }}>{event.generatedBy === 'AI' ? 'AI 작성' : '자동 템플릿 작성'}</small></article>; })}</div></div>}
+
+          {activeRoom.pendingDemandEvents.length > 0 && <div style={{ marginTop: '16px' }}><strong>학생에게 표시되는 발행된 신문</strong><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(250px,1fr))', gap: '10px', marginTop: '9px' }}>{activeRoom.pendingDemandEvents.map((event) => { const market = activeRoom.markets.find((item) => item.id === event.marketId); return <article key={event.marketId} style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '14px' }}><small style={{ color: '#92400e', fontWeight: 800 }}>{market?.icon} {market?.name} · 교사용 정답: 수요 {event.title} ({EVENT_INTENSITY_LABEL[event.demandIntensity || 'MEDIUM']}) / 공급 {event.supplyTitle || '변화 없음'} ({EVENT_INTENSITY_LABEL[event.supplyIntensity || 'MEDIUM']})</small><b>🛒 소비자 리포트</b><h4 style={{ margin: '7px 0' }}>{event.articleHeadline}</h4><p style={{ margin: 0, color: '#475569', fontSize: '13px', lineHeight: 1.6 }}>{event.articleBody}</p><b>🏭 생산 동향</b><h4 style={{ margin: '7px 0' }}>{event.supplyArticleHeadline}</h4><p style={{ whiteSpace: 'pre-line', fontSize: '13px', lineHeight: 1.6 }}>{event.supplyArticleBody}</p><small style={{ display: 'block', marginTop: '8px', color: '#94a3b8' }}>{event.generatedBy === 'AI' ? 'AI 작성' : '자동 템플릿 작성'}</small></article>; })}</div></div>}
         </section>
 
         {showForecast && <div className="teacher-nested-modal" role="dialog" aria-modal="true" aria-labelledby="market-forecast-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowForecast(false); }}><section className="teacher-forecast-modal" style={{ ...card, border: '2px solid #d97706' }}><div className="teacher-modal-heading"><h3 id="market-forecast-title" style={{ margin: 0 }}>🔍 선택 사건 적용 결과 예측</h3><button type="button" onClick={() => setShowForecast(false)} aria-label="예측 확인 닫기">✕</button></div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: '9px' }}>{eventForecasts.map(({ market, option, supplyOption, price, demand, materialCost, wage, productivity }) => <article key={market.id} style={{ background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '9px', padding: '12px' }}><strong>{market.icon} {market.name}</strong><small style={{ display: 'block', color: '#9a3412', margin: '4px 0 7px' }}>수요: {option.title} ({EVENT_INTENSITY_LABEL[demandIntensities[market.id] || 'MEDIUM']})<br />공급: {supplyOption.title} ({EVENT_INTENSITY_LABEL[supplyIntensities[market.id] || 'MEDIUM']})</small><span style={{ display: 'block' }}>시장가격 <b style={{ float: 'right' }}>{market.announcedPrice.toLocaleString()}원 → {price.toLocaleString()}원</b></span><span style={{ display: 'block' }}>기준수요 <b style={{ float: 'right' }}>{market.demandAtBasePrice.toLocaleString()} → {demand.toLocaleString()}</b></span><span style={{ display: 'block' }}>단위 재료비 <b style={{ float: 'right' }}>{materialCost.toLocaleString()}원</b></span><span style={{ display: 'block' }}>1명당 임금 <b style={{ float: 'right' }}>{wage.toLocaleString()}원</b></span><span style={{ display: 'block' }}>첫 노동자 생산성 <b style={{ float: 'right' }}>{productivity}</b></span></article>)}</div></section></div>}

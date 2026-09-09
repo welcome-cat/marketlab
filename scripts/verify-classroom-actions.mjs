@@ -42,3 +42,20 @@ fixture.set(room+'/productionPlans/a_1',{});
 await assert.rejects(companyService.exitMarket('test','a',MARKETS[1].id,MARKETS[0].id),/PRODUCTION_ALREADY_CONFIRMED/);
 for(const [id,article] of Object.entries(defaultNewsTemplates()).filter(([id])=>!id.startsWith('recovery_'))){assert.ok(article.body.trim().length>0,id);assert.ok(article.body.split('\n').length<=2,id);}
 console.log('PASS: correct/wrong quiz rewards, repeat submission, changed round, atomic market change guards, short articles.');
+
+const {roomService, normalizeRoom, withRecoveryNews}=await import('../src/services/roomService.ts');
+const {getPublishedNewspaper}=await import('../src/services/newsService.ts');
+const waiting=normalizeRoom('test',{status:'WAITING',currentRound:1,markets:MARKETS});
+assert.deepEqual(getPublishedNewspaper(waiting),[]);
+const articles=waiting.demandEvents.map(event=>({...event,articleHeadline:'새 소비자 기사',articleBody:'수정한 소비자 원고',supplyArticleHeadline:'새 생산 기사',supplyArticleBody:'수정한 생산 원고'}));
+fixture.set(room,waiting);
+await roomService.confirmDemandEvents('test',articles);
+assert.deepEqual(getPublishedNewspaper(normalizeRoom('test',fixture.get(room))),normalizeRoom('test',fixture.get(room)).pendingDemandEvents);
+assert.equal(getPublishedNewspaper(fixture.get(room))[0].articleBody,'수정한 소비자 원고');
+await roomService.startRoom('test');
+assert.equal(getPublishedNewspaper(fixture.get(room))[0].supplyArticleBody,'수정한 생산 원고');
+await assert.rejects(roomService.confirmDemandEvents('test',articles),/DEMAND_EVENT_SELECTION_NOT_ALLOWED/);
+const recovered=withRecoveryNews(articles,[{...articles[0],optionId:'income_up'}]);
+assert.notEqual(recovered[0].articleBody,articles[0].articleBody);
+assert.deepEqual(withRecoveryNews(recovered,[{...articles[0],optionId:'income_up'}]),recovered);
+console.log('PASS: unpublished waiting room, publish before start, unchanged articles on start, rejected late publication, recovery included once.');

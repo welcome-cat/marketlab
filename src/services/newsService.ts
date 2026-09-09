@@ -1,5 +1,9 @@
-import type { DemandEvent, DemandEventOption, Market } from '../types/domain';
+import type { DemandEvent, DemandEventOption, Market, Room } from '../types/domain';
 import { DEMAND_EVENT_OPTIONS } from '../types/domain';
+
+// Before the first round, room-creation defaults are not a published newspaper.
+export const getPublishedNewspaper = (room: Pick<Room, 'pendingDemandEvents' | 'demandEvents' | 'status'>) =>
+  room.pendingDemandEvents.length > 0 ? room.pendingDemandEvents : room.status === 'WAITING' ? [] : room.demandEvents;
 
 interface NewsArticle {
   headline: string;
