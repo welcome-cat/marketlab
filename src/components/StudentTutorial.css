@@ -1,4 +1,4 @@
-.tutorial-launch { border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; border-radius: 10px; padding: 7px 12px; align-self: flex-start; white-space: nowrap; cursor: pointer; }
+.tutorial-launch, .student-header-button { border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; border-radius: 10px; padding: 7px 12px; align-self: flex-start; white-space: nowrap; cursor: pointer; }
 .student-tour { position: fixed; inset: 0; margin: 0; padding: 0; width: 100vw; height: 100dvh; max-width: none; max-height: none; border: 0; background: transparent; overflow: hidden; color: #172554; }
 .student-tour::backdrop { background: transparent; }
 .tour-spotlight { position: fixed; box-sizing: border-box; border: 3px solid #2563eb; border-radius: 10px; box-shadow: 0 0 0 100vmax rgb(15 23 42 / 65%); pointer-events: none; }
@@ -11,4 +11,4 @@
 .tour-panel button { border: 1px solid #cbd5e1; border-radius: 9px; padding: 8px 14px; background: #fff; color: #334155; cursor: pointer; }
 .tour-panel button:disabled { opacity: .4; cursor: default; }
 .tour-panel .tour-next { background: #2563eb; color: white; border-color: #2563eb; }
-.tour-panel button:focus-visible, .tutorial-launch:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }
+.tour-panel button:focus-visible, .tutorial-launch:focus-visible, .student-header-button:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }

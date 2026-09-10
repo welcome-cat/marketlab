@@ -5,6 +5,7 @@ import { db } from './firebase/config';
 import type { DemandEvent, EconomicsQuiz, Market, ReflectionSheet, Room } from '../types/domain';
 import { DEFAULT_ECONOMICS_QUIZZES, DEFAULT_REFLECTION_SHEETS, DEFAULT_UNLOCK_ROUNDS, DEMAND_EVENT_OPTIONS, EVENT_INTENSITY_SCALE, MARKETS } from '../types/domain';
 import { defaultNewsTemplates, getRecoveryMessage } from './newsService';
+import { getEventMarketMultipliers } from './eventStrength';
 
 const baselineEvents = (templates?: Record<string, { headline: string; body: string }>): DemandEvent[] => {
   const allTemplates = { ...defaultNewsTemplates(), ...(templates || {}) };
@@ -40,6 +41,7 @@ const normalizeDemandEvent = (event: Partial<DemandEvent>, market: Market): Dema
   multiplier: event.multiplier || 1,
   demandIntensity: event.demandIntensity || 'MEDIUM',
   supplyIntensity: event.supplyIntensity || 'MEDIUM',
+  marketEffectVersion: event.marketEffectVersion === 2 ? 2 : 1,
   materialMultiplier: event.materialMultiplier || 1,
   wageMultiplier: event.wageMultiplier || 1,
   productivityMultiplier: event.productivityMultiplier || 1,
@@ -124,6 +126,7 @@ export const normalizeRoom = (roomId: string, data: Partial<Room>): Room => ({
   reflectionInterval: Math.max(1, Math.min(20, Math.floor(data.reflectionInterval || 3))),
   reflectionSheets: data.reflectionSheets?.length ? data.reflectionSheets : DEFAULT_REFLECTION_SHEETS,
   newsTemplates: data.newsTemplates || {},
+  roundWinner: data.roundWinner || null,
   createdAt: data.createdAt || 0,
 });
 
@@ -143,19 +146,19 @@ export const applyDemandEvents = (markets: Market[], events: DemandEvent[]) => m
   };
   if (!event) return { ...baseline, ...settings };
   // 가격수용 시장은 이동한 수요곡선과 우상향 공급곡선의 새 교점을
-  // 계산한다. 과점시장의 기준가격은 수요 사건의 방향만 반영한다.
-  const demandScale = event.demandIntensity ? EVENT_INTENSITY_SCALE[event.demandIntensity] : market.demandEventEffectScale;
+  // 계산한다. 과점시장은 별도의 기업별 가격·경쟁 모형을 유지한다.
   const supplyScale = event.supplyIntensity ? EVENT_INTENSITY_SCALE[event.supplyIntensity] : market.supplyEventEffectScale;
-  const demandMultiplier = scaleChange(event.multiplier, demandScale);
+  const { demand: demandMultiplier, supply: supplyMultiplier } = getEventMarketMultipliers(event, market);
   const legacySupplyEvent = event.effectType === 'SUPPLY';
-  const rawSupplyMultiplier = legacySupplyEvent ? event.supplyMultiplier : event.supplyCurveMultiplier;
-  const supplyMultiplier = scaleChange(rawSupplyMultiplier, supplyScale);
   const equilibriumFactor = baseline.marketType === 'PERFECT_COMPETITION'
     ? Math.pow(demandMultiplier / supplyMultiplier, 1 / Math.max(0.1, baseline.priceElasticity + baseline.supplyElasticity))
     : Math.pow(demandMultiplier / supplyMultiplier, 0.5);
   return {
     ...baseline,
     ...settings,
+    // Preserve the existing curve at migration; new tax/subsidy events use the
+    // common horizontal shift instead of adding a second market-price effect.
+    ...(event.marketEffectVersion === 2 ? { marketSupplyPolicyOffset: baseline.marketSupplyPolicyOffset ?? ((baseline.producerTaxPerUnit || 0) - (baseline.producerSubsidyPerUnit || 0)) } : {}),
     supplyAtBasePrice: baseline.supplyAtBasePrice ?? baseline.demandAtBasePrice,
     publicPrice: market.publicPrice ?? market.announcedPrice,
     publicPriceRound: market.publicPriceRound ?? 0,
@@ -166,8 +169,8 @@ export const applyDemandEvents = (markets: Market[], events: DemandEvent[]) => m
     rentPerRound: Math.round(baseline.rentPerRound * scaleChange(event.supplyRentMultiplier, supplyScale)),
     firstWorkerProductivity: baseline.firstWorkerProductivity * scaleChange(legacySupplyEvent ? event.productivityMultiplier : event.supplyProductivityMultiplier, supplyScale),
     supplyShiftMultiplier: baseline.supplyShiftMultiplier * supplyMultiplier,
-    producerTaxPerUnit: event.supplyOptionId === 'supply_baseline' ? baseline.producerTaxPerUnit : event.producerTaxPerUnit || 0,
-    producerSubsidyPerUnit: event.supplyOptionId === 'supply_baseline' ? baseline.producerSubsidyPerUnit : event.producerSubsidyPerUnit || 0,
+    producerTaxPerUnit: event.supplyOptionId === 'producer_tax' ? event.producerTaxPerUnit || 0 : event.supplyOptionId === 'producer_subsidy' ? 0 : baseline.producerTaxPerUnit,
+    producerSubsidyPerUnit: event.supplyOptionId === 'producer_subsidy' ? event.producerSubsidyPerUnit || 0 : event.supplyOptionId === 'producer_tax' ? 0 : baseline.producerSubsidyPerUnit,
     disasterLossRate: event.disasterLossRate || 0,
   };
 });
@@ -175,10 +178,9 @@ export const applyDemandEvents = (markets: Market[], events: DemandEvent[]) => m
 export const removeExpiredTemporaryEffects = (markets: Market[], previousEvents: DemandEvent[]) => markets.map((market) => {
   const previous = previousEvents.find((event) => event.marketId === market.id);
   if (!previous || (!isTemporaryDemandEvent(previous) && !isTemporarySupplyEvent(previous))) return market;
-  const demandScale = previous.demandIntensity ? EVENT_INTENSITY_SCALE[previous.demandIntensity] : market.demandEventEffectScale;
-  const supplyScale = previous.supplyIntensity ? EVENT_INTENSITY_SCALE[previous.supplyIntensity] : market.supplyEventEffectScale;
-  const demandMultiplier = isTemporaryDemandEvent(previous) ? scaleChange(previous.multiplier, demandScale) : 1;
-  const supplyMultiplier = isTemporarySupplyEvent(previous) ? scaleChange(previous.supplyCurveMultiplier ?? previous.supplyMultiplier, supplyScale) : 1;
+  const previousMultipliers = getEventMarketMultipliers(previous, market);
+  const demandMultiplier = isTemporaryDemandEvent(previous) ? previousMultipliers.demand : 1;
+  const supplyMultiplier = isTemporarySupplyEvent(previous) ? previousMultipliers.supply : 1;
   const equilibriumFactor = market.marketType === 'PERFECT_COMPETITION'
     ? Math.pow((1 / demandMultiplier) / (1 / supplyMultiplier), 1 / Math.max(0.1, market.priceElasticity + market.supplyElasticity))
     : Math.pow((1 / demandMultiplier) / (1 / supplyMultiplier), 0.5);
@@ -317,7 +319,7 @@ export const roomService = {
       if (events.length !== room.markets.length || events.some((event) => !DEMAND_EVENT_OPTIONS.some((option) => option.id === event.optionId))) {
         throw new Error('INVALID_DEMAND_EVENTS');
       }
-      transaction.update(roomRef, { pendingDemandEvents: events });
+      transaction.update(roomRef, { pendingDemandEvents: events.map(event => ({ ...event, marketEffectVersion: 2 })) });
     });
   },
   updateUnlockRounds: async (roomId: string, unlockRounds: Room['unlockRounds']): Promise<void> => {

@@ -295,9 +295,11 @@ export const scaleMarketEventFactor = (factor: number | undefined, effectScale: 
 // market.supplyElasticity와 일치하도록 계수를 정한다.
 export const calculateRepresentativeMarketSupply = (market: Market, price: number) => {
   if (market.marketType !== 'PERFECT_COMPETITION') return 0;
-  // 종량세는 생산자가 실제로 받는 가격을 낮추고, 보조금은 높인다.
-  // 같은 정책 금액을 학생 기업 비용과 시장 전체 공급곡선에 함께 반영한다.
-  const supplyPrice = Math.max(0, price - (market.producerTaxPerUnit || 0) + (market.producerSubsidyPerUnit || 0));
+  // 구버전은 종량세·보조금을 공급곡선의 가격 차이로 반영한다.
+  // New classroom events already encode policy direction in supplyShiftMultiplier.
+  // Retain only the pre-migration wedge; company policy costs remain unchanged.
+  const policyOffset = market.marketSupplyPolicyOffset ?? ((market.producerTaxPerUnit || 0) - (market.producerSubsidyPerUnit || 0));
+  const supplyPrice = Math.max(0, price - policyOffset);
   const baseQuantity = market.supplyAtBasePrice ?? market.demandAtBasePrice;
   const basePrice = Math.max(1, market.basePrice);
 
@@ -746,6 +748,7 @@ export const productionService = {
       }
 
       const now = Date.now();
+      const winnerCandidates: NonNullable<Room['roundWinner']>[] = [];
       const nextMarkets = room.markets.map((market) => {
         const marketPlans = plans.filter((plan) => plan.productId === market.id);
           const demandEvent = room.demandEvents.find((event) => event.marketId === market.id);
@@ -774,6 +777,16 @@ export const productionService = {
           const company = companySnapshot.data() as Company;
           const inventory = inventorySnapshot.data() as InventoryItem;
           const interestCost = Math.round((company.loanBalance || 0) * (company.loanAnnualRate || 0) / 100 / 3);
+          const economicProfit = revenue - (plan.productionCost + (plan.allocatedInvestmentCost || plan.investmentCost)) - interestCost;
+          winnerCandidates.push({
+            roundNumber: room.currentRound,
+            companyId: company.id,
+            companyName: company.name,
+            marketName: plan.marketName,
+            soldQuantity,
+            revenue,
+            economicProfit,
+          });
           transaction.update(companySnapshot.ref, { cash: company.cash + revenue - interestCost });
           transaction.update(inventorySnapshot.ref, {
             quantity: Math.max(0, inventory.quantity - soldQuantity),
@@ -783,7 +796,7 @@ export const productionService = {
             soldQuantity, marketPrice: market.priceControl === 'FIRM_PRICE' ? (plan.askingPrice || clearing.marketPrice) : clearing.marketPrice, revenue,
             profit: revenue - (plan.productionCost + (plan.allocatedInvestmentCost || plan.investmentCost)) - interestCost,
             operatingProfit: revenue - plan.productionCost,
-            economicProfit: revenue - (plan.productionCost + (plan.allocatedInvestmentCost || plan.investmentCost)) - interestCost,
+            economicProfit,
             cashFlow: revenue + (plan.machineResaleRevenue || 0) - plan.totalCost - interestCost,
             interestCost,
             settlementStatus: 'SETTLED',
@@ -796,7 +809,8 @@ export const productionService = {
         };
       });
 
-      transaction.update(roomRef, { roundPhase: 'RESULT', markets: nextMarkets });
+      const roundWinner = winnerCandidates.sort((a, b) => b.economicProfit - a.economicProfit || a.companyName.localeCompare(b.companyName))[0] || null;
+      transaction.update(roomRef, { roundPhase: 'RESULT', markets: nextMarkets, roundWinner });
     });
     } catch (error) {
       await runTransaction(db, async (transaction) => {

@@ -11,6 +11,8 @@ export interface Market {
   basePrice: number;
   demandAtBasePrice: number;
   supplyAtBasePrice?: number;
+  /** Legacy tax wedge retained when switching to intensity-based market shifts. */
+  marketSupplyPolicyOffset?: number;
   materialCostMultiplier: number;
   marketType: 'PERFECT_COMPETITION' | 'OLIGOPOLY';
   priceControl: 'MARKET_PRICE' | 'FIRM_PRICE';
@@ -58,6 +60,8 @@ export interface DemandEvent {
   multiplier: number;
   demandIntensity?: 'WEAK' | 'MEDIUM' | 'STRONG';
   supplyIntensity?: 'WEAK' | 'MEDIUM' | 'STRONG';
+  /** Version 2 uses equal quantity-shift strengths for demand and supply. */
+  marketEffectVersion?: 1 | 2;
   materialMultiplier?: number;
   wageMultiplier?: number;
   productivityMultiplier?: number;
@@ -160,6 +164,15 @@ export interface Room {
   reflectionInterval?: number;
   reflectionSheets?: ReflectionSheet[];
   newsTemplates?: Record<string, { headline: string; body: string }>;
+  roundWinner?: {
+    roundNumber: number;
+    companyId: string;
+    companyName: string;
+    marketName: string;
+    soldQuantity: number;
+    revenue: number;
+    economicProfit: number;
+  } | null;
   createdAt: number;
   // 이전 버전 룸 문서 호환용
   marketId?: string;

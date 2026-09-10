@@ -50,6 +50,7 @@ assert.deepEqual(getPublishedNewspaper(waiting),[]);
 const articles=waiting.demandEvents.map(event=>({...event,articleHeadline:'새 소비자 기사',articleBody:'수정한 소비자 원고',supplyArticleHeadline:'새 생산 기사',supplyArticleBody:'수정한 생산 원고'}));
 fixture.set(room,waiting);
 await roomService.confirmDemandEvents('test',articles);
+assert.equal(fixture.get(room).pendingDemandEvents[0].marketEffectVersion,2);
 assert.deepEqual(getPublishedNewspaper(normalizeRoom('test',fixture.get(room))),normalizeRoom('test',fixture.get(room)).pendingDemandEvents);
 assert.equal(getPublishedNewspaper(fixture.get(room))[0].articleBody,'수정한 소비자 원고');
 await roomService.startRoom('test');

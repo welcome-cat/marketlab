@@ -124,8 +124,6 @@ export const StudentPage: React.FC = () => {
   const [inventory, setInventory] = useState<InventoryItem | null>(null);
   const [plan, setPlan] = useState<ProductionPlan | null>(null);
   const [marketPlans, setMarketPlans] = useState<ProductionPlan[]>([]);
-  const [allPlans, setAllPlans] = useState<ProductionPlan[]>([]);
-  const [roomCompanies, setRoomCompanies] = useState<Company[]>([]);
   const [workerCount, setWorkerCount] = useState(1);
   const [productionQty, setProductionQty] = useState(10);
   const [machinePurchases, setMachinePurchases] = useState(0);
@@ -144,7 +142,7 @@ export const StudentPage: React.FC = () => {
   const priceResetKey = useRef('');
   const [rosterOpen, setRosterOpen] = useState(false);
   const [showSupplyCurve, setShowSupplyCurve] = useState(true);
-  const [showProducerSurplus, setShowProducerSurplus] = useState(false);
+  const [showProducerSurplus, setShowProducerSurplus] = useState(true);
   const [clock, setClock] = useState(0);
   const [reflection, setReflection] = useState<LearningReflection | null>(null);
   const [reflectionAnswers, setReflectionAnswers] = useState<Record<string, string>>({});
@@ -166,6 +164,7 @@ export const StudentPage: React.FC = () => {
   const askingPriceSaveSequence = useRef<Promise<void>>(Promise.resolve());
   const askingPriceRevision = useRef(0);
   const [priceSaveStatus, setPriceSaveStatus] = useState('');
+  const [dismissedWinnerRound, setDismissedWinnerRound] = useState<number | null>(null);
 
   useEffect(() => {
     if (!roomId || !companyName) return;
@@ -206,13 +205,6 @@ export const StudentPage: React.FC = () => {
       else { setCompany(null); setError('교사가 이 기업을 삭제했습니다.'); }
     });
   }, [roomId, companyId]);
-
-  useEffect(() => {
-    if (!companyId) return;
-    return companyService.subscribeCompanies(roomId, setRoomCompanies);
-  }, [roomId, companyId]);
-
-  useEffect(() => productionService.subscribeAllProductionPlans(roomId, setAllPlans), [roomId]);
 
   useEffect(() => {
     if (!companyId || currentRound === undefined) return;
@@ -505,23 +497,12 @@ export const StudentPage: React.FC = () => {
     finally { setSubmitting(false); }
   };
 
-  const latestSettledRound = allPlans.reduce((latest, item) => item.settlementStatus === 'SETTLED' ? Math.max(latest, item.roundNumber) : latest, 0);
-  const profitRanking = roomCompanies.map((item) => {
-    const companyPlans = allPlans.filter((candidate) => candidate.companyId === item.id && candidate.settlementStatus === 'SETTLED');
-    return {
-      id: item.id,
-      name: item.name,
-      latestProfit: companyPlans.filter((candidate) => candidate.roundNumber === latestSettledRound).reduce((sum, candidate) => sum + (candidate.economicProfit ?? candidate.profit ?? 0), 0),
-      cumulativeProfit: companyPlans.reduce((sum, candidate) => sum + (candidate.economicProfit ?? candidate.profit ?? 0), 0),
-      marketName: companyPlans.find((candidate) => candidate.roundNumber === latestSettledRound)?.marketName || '-',
-    };
-  }).sort((a, b) => b.latestProfit - a.latestProfit);
-
   const exitRecovery = (company.machineAssets || []).filter(asset => asset.marketId === company.currentMarketId).reduce((sum, asset) => sum + Math.round(asset.purchasePrice * Math.max(0, 0.3 - Math.max(0, room.currentRound - asset.purchasedRound - 1) * 0.05)) * asset.quantity, 0) + Math.round((inventory?.quantity || 0) * (inventory?.averageUnitCost || 0) * 0.5);
   return <div className={`student-page${readOnly ? ' student-readonly' : ''}`} style={{ minHeight: '100vh', background: '#f8fafc' }}>
     {marketChangeTarget && <div className="teacher-nested-modal" role="dialog" aria-modal="true" aria-labelledby="market-change-title"><section className="teacher-company-status-modal" style={card}><h2 id="market-change-title">기존의 자산을 매각하고 {marketChangeTarget.name}으로 변경하시겠습니까?</h2><p>전용 기계는 감가된 중고가격, 재고는 장부가의 50%로 정산합니다.</p><p>예상 회수액: <b>{exitRecovery.toLocaleString()}원</b> · 새 시장 진입비: <b>{marketChangeTarget.initialSetupCost.toLocaleString()}원</b> (생산 확정 시 반영)</p><label>업종 경험<select value={switchTraitId} onChange={event => setSwitchTraitId(event.target.value)} disabled={submitting}>{INDUSTRY_TRAITS.map(trait => <option key={trait.id} value={trait.id}>{trait.name}{trait.id === company.industryTraitId ? ' (현재 경험 유지 · 무료)' : ' (변경 · 15,000원)'}</option>)}</select></label><p>변경 후 고용·생산량을 확인하고 생산을 확정하세요.</p><button disabled={submitting} onClick={() => setMarketChangeTarget(null)}>취소</button><button disabled={submitting} onClick={() => settleMarketExit(marketChangeTarget)}>{submitting ? '처리 중…' : '정산하고 시장 변경'}</button><p role="status">{message}</p></section></div>}
     {teacherEditing && <div className="teacher-readonly-banner">교사 편집 중 · {company.name} <button onClick={() => navigate("/teacher")}>교사 대시보드로</button></div>}
     {readOnly && <div className="teacher-readonly-banner">👁️ 교사용 읽기 전용 화면 — 학생의 선택을 수정할 수 없습니다.</div>}
+    {room.roundPhase === 'RESULT' && room.roundWinner?.roundNumber === room.currentRound && dismissedWinnerRound !== room.currentRound && <div className="teacher-nested-modal" role="dialog" aria-modal="true" aria-labelledby="round-winner-title"><section className="teacher-company-status-modal" style={{ ...card, maxWidth: '460px', textAlign: 'center', border: '2px solid #f59e0b', background: '#fffbeb' }}><div style={{ fontSize: '48px' }}>🏆</div><h2 id="round-winner-title" style={{ margin: '5px 0' }}>Round {room.currentRound} 이윤 1위</h2><h3 style={{ margin: '12px 0', color: '#b45309', fontSize: '24px' }}>{room.roundWinner.companyName}</h3><div style={{ display: 'grid', gap: '8px', padding: '14px', borderRadius: '12px', background: '#fff' }}><span>시장 <b style={{ float: 'right' }}>{room.roundWinner.marketName}</b></span><span>판매량 <b style={{ float: 'right' }}>{room.roundWinner.soldQuantity.toLocaleString()}</b></span><span>매출 <b style={{ float: 'right', color: '#2563eb' }}>{room.roundWinner.revenue.toLocaleString()}원</b></span><span>이윤 <b style={{ float: 'right', color: '#059669' }}>{room.roundWinner.economicProfit.toLocaleString()}원</b></span></div><p style={{ color: '#64748b', fontSize: '13px' }}>이번 라운드에서 가장 높은 경제적 이윤을 기록한 기업입니다.</p><button type="button" onClick={() => setDismissedWinnerRound(room.currentRound)} style={{ width: '100%', padding: '11px', border: 0, borderRadius: '9px', background: '#f59e0b', color: '#fff', fontWeight: 800 }}>확인</button></section></div>}
     {productionConfirmOpen && <div className="confirmation-backdrop" role="presentation">
       <section className="production-confirmation" role="dialog" aria-modal="true" aria-labelledby="production-confirmation-title">
         <h2 id="production-confirmation-title">생산·가격예측 최종 확인</h2>
@@ -641,7 +622,7 @@ export const StudentPage: React.FC = () => {
     )}
     <main className="student-dashboard">
     <section className="student-company" style={card}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}><div><small style={{ color: '#64748b' }}>룸 {room.id} · {room.title}</small><h1 style={{ margin: '3px 0' }}>🏢 {company.name}</h1></div><div style={{ display: 'flex', gap: '7px' }}><StudentTutorial key={`${room.currentRound}:${room.roundPhase}`} phase={room.roundPhase} /><button type="button" onClick={() => setRosterOpen(true)} style={{ height: '34px' }}>👥 회사 인원 보기</button><button onClick={logout} style={{ height: '34px' }}>로그아웃</button></div></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}><div><small style={{ color: '#64748b' }}>룸 {room.id} · {room.title}</small><h1 style={{ margin: '3px 0' }}>🏢 {company.name}</h1></div><div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}><StudentTutorial key={`${room.currentRound}:${room.roundPhase}`} phase={room.roundPhase} /><button type="button" className="student-header-button" onClick={() => setRosterOpen(true)}>👥 회사 인원 보기</button><button type="button" className="student-header-button" onClick={logout}>로그아웃</button></div></div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px', marginTop: '14px' }}>
         <div><small>보유 자본금</small><strong style={{ display: 'block', color: '#059669' }}>{company.cash.toLocaleString()}원</strong></div>
         <div><small>보유 기계</small><strong style={{ display: 'block' }}>{company.machineCount || 1}대</strong></div>
@@ -758,7 +739,6 @@ export const StudentPage: React.FC = () => {
           </span>
         </div>
       )}
-      {isRiceMarket && <div style={{ marginBottom: '13px', padding: '12px', borderRadius: '10px', background: '#fef3c7', color: '#92400e' }}><strong>🌾 매 라운드 수확·판매</strong><small style={{ display: 'block' }}>1포대=10kg · 노동·기계 생산능력과 보유현금 내에서 생산 · 이전 재고와 이번 생산분을 함께 판매할 수 있습니다. 기계가 늘어나면 작업 공간과 이용 농지가 확대되어 농지 이용료가 증가합니다.</small></div>}
       <div data-tutorial="workers" style={{ marginTop: '12px' }}>
         <TouchStepper
           label="총 고용 노동자 수"
@@ -944,8 +924,6 @@ export const StudentPage: React.FC = () => {
       <button onClick={confirmProduction} disabled={!canConfirm} style={{ width: '100%', padding: '13px', marginTop: '15px', border: 0, borderRadius: '9px', background: canConfirm ? '#2563eb' : '#cbd5e1', color: '#fff', fontWeight: 800 }}>{plan ? `Round ${plan.roundNumber} 생산 결정 완료` : !isDecision ? '기업 선택 시간이 아닙니다' : submitting ? '확정 중...' : '생산 결정 확정'}</button>
       {message && <p style={{ textAlign: 'center', color: plan ? '#15803d' : '#b45309' }}>{message}</p>}
     </section>
-
-    {latestSettledRound > 0 && <section className="student-ranking" style={card}><h2 style={{ marginTop: 0, fontSize: '18px' }}>🏆 Round {latestSettledRound} 기업 이윤 비교</h2><p style={{ color: '#64748b', fontSize: '13px' }}>같은 시장가격에서도 시장 선택과 비용 구조에 따라 이윤이 달라집니다. 순위보다 전략의 차이를 비교해보세요.</p><div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'center', fontSize: '13px' }}><thead><tr><th>순위</th><th>기업</th><th>선택 시장</th><th>이번 라운드 이윤</th><th>누적 이윤</th></tr></thead><tbody>{profitRanking.map((item, index) => <tr key={item.id} style={{ borderTop: '1px solid #e2e8f0', background: item.id === company.id ? '#eff6ff' : '#fff' }}><td style={{ padding: '9px' }}>{index + 1}</td><td><strong>{item.name}{item.id === company.id ? ' (우리 기업)' : ''}</strong></td><td>{item.marketName}</td><td style={{ color: item.latestProfit >= 0 ? '#059669' : '#dc2626', fontWeight: 800 }}>{item.latestProfit.toLocaleString()}원</td><td>{item.cumulativeProfit.toLocaleString()}원</td></tr>)}</tbody></table></div></section>}
 
     <section className="student-hint" style={{ ...card, background: '#fefce8', borderColor: '#fef08a' }}><strong>💡 생각해보기</strong><p style={{ marginBottom: 0, fontSize: '13px', color: '#854d0e' }}>어느 시장이 가장 높은 이윤을 줄까요? 시장가격만 보지 말고 재료비, 한계비용, 투자비를 함께 비교하세요. 노동자를 계속 늘리면 한계생산이 감소하지만 기계와 기술은 그 감소를 완화합니다.</p></section>
     </div>

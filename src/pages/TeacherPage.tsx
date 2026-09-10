@@ -312,7 +312,7 @@ export const TeacherPage: React.FC = () => {
         const demandTemplate = newsTemplateDraft[option.id]; const supplyTemplate = newsTemplateDraft[supplyOption.id];
         const demandArticle = composeEventArticle(market, option, 'CONSUMER');
         const supplyArticle = composeEventArticle(market, supplyOption, 'PRODUCTION');
-        return { marketId: market.id, optionId: option.id, factor: option.factor, effectType: 'DEMAND', title: option.title, description: option.description, multiplier: option.multiplier, ecoPreferenceBoost: option.ecoPreferenceBoost || 0, demandIntensity, supplyIntensity, supplyOptionId: supplyOption.id, supplyFactor: supplyOption.factor, supplyTitle: supplyOption.title, supplyDescription: supplyOption.description, supplyMaterialMultiplier: supplyOption.id.startsWith('material_') && materialPriceDraft[market.id] ? materialPriceDraft[market.id] / Math.max(1, market.materialUnitCost * market.materialCostMultiplier) : supplyOption.materialMultiplier || 1, supplyWageMultiplier: supplyOption.id.startsWith('wage_') && wageDraft[market.id] ? wageDraft[market.id] / Math.max(1, market.wagePerWorker) : supplyOption.wageMultiplier || 1, supplyRentMultiplier: supplyOption.id.startsWith('rent_') && rentDraft[market.id] ? rentDraft[market.id] / Math.max(1, market.rentPerRound) : 1, supplyProductivityMultiplier: supplyOption.productivityMultiplier || 1, supplyCurveMultiplier: isTaxPolicy ? 1 : supplyOption.supplyMultiplier || 1, producerTaxPerUnit: supplyOption.id === 'producer_tax' ? Math.max(0, taxDraft[market.id] || 0) : 0, producerSubsidyPerUnit: supplyOption.id === 'producer_subsidy' ? Math.max(0, subsidyDraft[market.id] || 0) : 0, disasterLossChance: supplyOption.id === 'rice_typhoon' ? Math.max(0, Math.min(1, (disasterChanceDraft[market.id] || 40) / 100)) : 0, disasterLossRate: supplyOption.id === 'rice_typhoon' ? Math.max(0, Math.min(1, (disasterLossDraft[market.id] || 30) / 100)) : 0, articleHeadline: edit?.headline?.trim() || demandTemplate?.headline || demandArticle.headline, articleBody: edit?.body?.trim() || demandTemplate?.body || demandArticle.body, supplyArticleHeadline: edit?.supplyHeadline?.trim() || supplyTemplate?.headline || supplyArticle.headline, supplyArticleBody: edit?.supplyBody?.trim() || supplyTemplate?.body || supplyArticle.body, generatedBy: 'TEMPLATE' };
+        return { marketEffectVersion: 2, marketId: market.id, optionId: option.id, factor: option.factor, effectType: 'DEMAND', title: option.title, description: option.description, multiplier: option.multiplier, ecoPreferenceBoost: option.ecoPreferenceBoost || 0, demandIntensity, supplyIntensity, supplyOptionId: supplyOption.id, supplyFactor: supplyOption.factor, supplyTitle: supplyOption.title, supplyDescription: supplyOption.description, supplyMaterialMultiplier: supplyOption.id.startsWith('material_') && materialPriceDraft[market.id] ? materialPriceDraft[market.id] / Math.max(1, market.materialUnitCost * market.materialCostMultiplier) : supplyOption.materialMultiplier || 1, supplyWageMultiplier: supplyOption.id.startsWith('wage_') && wageDraft[market.id] ? wageDraft[market.id] / Math.max(1, market.wagePerWorker) : supplyOption.wageMultiplier || 1, supplyRentMultiplier: supplyOption.id.startsWith('rent_') && rentDraft[market.id] ? rentDraft[market.id] / Math.max(1, market.rentPerRound) : 1, supplyProductivityMultiplier: supplyOption.productivityMultiplier || 1, supplyCurveMultiplier: isTaxPolicy ? 1 : supplyOption.supplyMultiplier || 1, producerTaxPerUnit: supplyOption.id === 'producer_tax' ? Math.max(0, taxDraft[market.id] || 0) : 0, producerSubsidyPerUnit: supplyOption.id === 'producer_subsidy' ? Math.max(0, subsidyDraft[market.id] || 0) : 0, disasterLossChance: supplyOption.id === 'rice_typhoon' ? Math.max(0, Math.min(1, (disasterChanceDraft[market.id] || 40) / 100)) : 0, disasterLossRate: supplyOption.id === 'rice_typhoon' ? Math.max(0, Math.min(1, (disasterLossDraft[market.id] || 30) / 100)) : 0, articleHeadline: edit?.headline?.trim() || demandTemplate?.headline || demandArticle.headline, articleBody: edit?.body?.trim() || demandTemplate?.body || demandArticle.body, supplyArticleHeadline: edit?.supplyHeadline?.trim() || supplyTemplate?.headline || supplyArticle.headline, supplyArticleBody: edit?.supplyBody?.trim() || supplyTemplate?.body || supplyArticle.body, generatedBy: 'TEMPLATE' };
       }) : [];
 
   const publicationEvents = withRecoveryNews(draftEvents, activeRoom?.status === 'RUNNING' ? activeRoom.demandEvents : [], newsTemplateDraft);
@@ -377,16 +377,7 @@ export const TeacherPage: React.FC = () => {
     const option = DEMAND_EVENT_OPTIONS.find((item) => item.id === (demandSelections[market.id] || 'baseline')) || DEMAND_EVENT_OPTIONS.find((item) => item.id === 'baseline')!;
     const supplyOption = DEMAND_EVENT_OPTIONS.find((item) => item.id === (supplySelections[market.id] || 'supply_baseline')) || DEMAND_EVENT_OPTIONS.find((item) => item.id === 'supply_baseline')!;
     const supplyScale = EVENT_INTENSITY_SCALE[supplyIntensities[market.id] || 'MEDIUM'];
-    const forecastMarket = transitionMarkets(activeRoom, [{
-      ...activeRoom.demandEvents.find(event => event.marketId === market.id)!,
-      marketId: market.id, optionId: option.id, supplyOptionId: supplyOption.id,
-      multiplier: option.multiplier, effectType: 'DEMAND',
-      demandIntensity: demandIntensities[market.id] || 'MEDIUM',
-      supplyIntensity: supplyIntensities[market.id] || 'MEDIUM',
-      supplyCurveMultiplier: supplyOption.supplyMultiplier || 1,
-      producerTaxPerUnit: supplyOption.id === 'producer_tax' ? taxDraft[market.id] || 0 : 0,
-      producerSubsidyPerUnit: supplyOption.id === 'producer_subsidy' ? subsidyDraft[market.id] || 0 : 0,
-    }]).find(item => item.id === market.id)!;
+    const forecastMarket = transitionMarkets(activeRoom, publicationEvents).find(item => item.id === market.id)!;
     return {
       market,
       option,
@@ -485,8 +476,8 @@ export const TeacherPage: React.FC = () => {
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
         <div><span style={{ fontSize: '12px', fontWeight: 800, color: '#2563eb' }}>MARKETLAB TEACHER</span><h1 style={{ margin: '3px 0', fontSize: '24px' }}>👨‍🏫 교사용 대시보드</h1></div>
         <div style={{ display: 'flex', gap: '8px' }}>
-          {activeRoom && <button onClick={() => setActiveRoom(null)} style={{ padding: '8px 11px' }}>다른 룸</button>}
-          <button onClick={() => { sessionStorage.removeItem('marketlab:teacher-auth'); navigate('/', { replace: true }); }} style={{ padding: '8px 11px' }}>로그아웃</button>
+          {activeRoom && <button type="button" className="teacher-header-button" onClick={() => setActiveRoom(null)}>다른 룸</button>}
+          <button type="button" className="teacher-logout-button" onClick={() => { sessionStorage.removeItem('marketlab:teacher-auth'); navigate('/', { replace: true }); }}>로그아웃</button>
         </div>
       </header>
 
@@ -622,7 +613,7 @@ export const TeacherPage: React.FC = () => {
         <section className="teacher-demand-events" style={{ ...card, border: '2px solid #d97706', background: '#fffbeb' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'start', flexWrap: 'wrap' }}>
             <div><h3 style={{ margin: 0 }}>📰 다음 시장 신문 준비(선택)</h3><p style={{ margin: '6px 0', color: '#92400e', fontSize: '13px' }}>몇 라운드마다 충격을 주고 싶을 때만 발행하세요. 발행하지 않으면 다음 라운드는 자동으로 ‘변화 없음’이 적용됩니다.</p></div>
-            <div className="teacher-news-actions" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}><button className="news-template-button" onClick={() => { setNewsTemplateDraft((current) => mergeNewsTemplates(current)); setShowNewsTemplates(true); }}>🗂 상황별 원고 확인·편집</button><button disabled={newsGenerating || !canPrepareDemandEvents} onClick={handleRandomDemandEvents}>🎲 수요·공급 사건 무작위 선택</button><button onClick={() => setShowForecast(true)}>🔍 예측 확인</button><button disabled={newsGenerating || isNewsPublished || !canPrepareDemandEvents} onClick={handleConfirmDemandEvents} style={{ background: '#d97706', color: '#fff', border: 0, borderRadius: '8px', padding: '10px 14px', fontWeight: 800 }}>{newsGenerating ? '발행 중...' : isNewsPublished ? '✓ 발행 완료' : '선택 확정·신문 발행'}</button></div>
+            <p style={{ color: '#92400e', fontSize: '13px' }}>시장 전체 변화 폭: 약함 6% · 보통 10% · 강함 18%. 수요·공급이 같은 방향·같은 강도이면 가격 효과는 상쇄되고 거래량이 변합니다. 기업 비용 변화는 별도로 반영됩니다.</p><div className="teacher-news-actions"><button type="button" className="news-template-button" onClick={() => { setNewsTemplateDraft((current) => mergeNewsTemplates(current)); setShowNewsTemplates(true); }}>🗂 상황별 원고 확인·편집</button><button type="button" disabled={newsGenerating || !canPrepareDemandEvents} onClick={handleRandomDemandEvents}>🎲 수요·공급 사건 무작위 선택</button><button type="button" onClick={() => setShowForecast(true)}>🔍 예측 확인</button><button type="button" className="news-publish-button" disabled={newsGenerating || isNewsPublished || !canPrepareDemandEvents} onClick={handleConfirmDemandEvents}>{newsGenerating ? '발행 중...' : isNewsPublished ? '✓ 발행 완료' : '선택 확정·신문 발행'}</button></div>
           {newsMessage && (!newsMessage.includes('발행되었습니다') || isNewsPublished) && <p role="status" style={{ padding: '10px 12px', margin: '12px 0 0', borderRadius: '8px', background: newsMessage.includes('발행되었습니다') ? '#dcfce7' : '#fee2e2', color: newsMessage.includes('발행되었습니다') ? '#166534' : '#991b1b', fontWeight: 700 }}>{newsMessage}</p>}
           <p role="status" style={{ color: '#92400e', fontSize: '13px' }}>{isNewsPublished ? '학생 신문에 반영되었습니다. 사건이나 원고를 수정하면 다시 발행할 수 있습니다.' : '아래 내용은 발행 전 초안입니다. 발행 버튼을 눌러야 학생 신문에 반영됩니다.'}</p>
           </div>
@@ -715,7 +706,7 @@ export const TeacherPage: React.FC = () => {
                   <th>평균비용</th>
                   <th>한계비용</th>
                   <th>{activeRoom.roundPhase === 'RESULT' ? '실제 판매' : activeRoom.roundPhase === 'SELLING' ? '실시간 판매' : '예상 판매'}</th>
-                  <th><button type="button" onClick={() => setProfitVisibleKey(showProfits ? '' : profitKey)}>{showProfits ? '이윤 숨기기' : '이윤 보기'}</button>{activeRoom.roundPhase === 'RESULT' ? '실제 이윤' : activeRoom.roundPhase === 'SELLING' ? '실시간 수입' : '예상 이윤'}</th>
+                  <th><button type="button" className="comparison-button profit-toggle" aria-pressed={showProfits} title={activeRoom.roundPhase === 'RESULT' ? '실제 이윤 공개 여부' : activeRoom.roundPhase === 'SELLING' ? '실시간 수입 공개 여부' : '예상 이윤 공개 여부'} onClick={() => setProfitVisibleKey(showProfits ? '' : profitKey)}>{showProfits ? '이윤 숨기기' : '이윤 보기'}</button></th>
                   <th>현금</th>
                   <th>관리</th>
                 </tr>
@@ -747,9 +738,9 @@ export const TeacherPage: React.FC = () => {
                       </td>
                       <td>{company.cash.toLocaleString()}원<br /><small>빚 {(company.loanBalance || 0).toLocaleString()}원 · 차감 후 {(company.cash - (company.loanBalance || 0)).toLocaleString()}원</small></td>
                       <td style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                        <button onClick={() => setSelectedCompanyId(company.id)}>상세</button>
-                        <button disabled={companyActionId === company.id} onClick={() => handleRenameCompany(company)} title="팀명 수정">수정</button>
-                        <button disabled={companyActionId === company.id} onClick={() => handleDeleteCompany(company)} style={{ color: '#dc2626' }} title="기업 삭제">삭제</button>
+                        <button type="button" className="comparison-button" onClick={() => setSelectedCompanyId(company.id)}>상세</button>
+                        <button type="button" className="comparison-button comparison-edit" disabled={companyActionId === company.id} onClick={() => handleRenameCompany(company)} title="팀명 수정">수정</button>
+                        <button type="button" className="comparison-button comparison-delete" disabled={companyActionId === company.id} onClick={() => handleDeleteCompany(company)} title="기업 삭제">삭제</button>
                       </td>
                     </tr>
                   );
