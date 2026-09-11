@@ -32,9 +32,11 @@ async function joinStudent(browser: Browser, baseURL: string, roomCode: string, 
   await page.goto('/');
   await page.getByPlaceholder('선생님이 안내한 코드 (예: ROOM101)').fill(roomCode);
   await page.getByPlaceholder('팀 또는 회사 이름 (예: 한빛전자)').fill(companyName);
+  await page.getByRole('button', { name: '확인', exact: true }).click();
+  await expect(page.getByText('아직 없는 기업입니다.', { exact: false })).toBeVisible();
   await page.getByLabel('학생 1 학번').fill(`E2E-${index + 1}`);
   await page.getByLabel('학생 1 이름').fill(`테스트학생${index + 1}`);
-  await page.getByRole('button', { name: '회사 접속하기' }).click();
+  await page.getByRole('button', { name: '회사 창립하기' }).click();
 
   await expect(page.getByRole('heading', { name: `🏢 ${companyName}` })).toBeVisible();
   await expect(page.getByText(new RegExp(`룸 ${roomCode}`))).toBeVisible();
@@ -58,7 +60,7 @@ async function joinStudent(browser: Browser, baseURL: string, roomCode: string, 
   await page.locator('.student-diagnosis > summary').click();
   await expect(page.getByRole('button', { name: '모의 생산 비교 열기' })).toBeVisible();
   await expect(page.locator('.diagnosis-simulation')).toBeHidden();
-  return { context, companyName };
+  return { context, page, companyName };
 }
 
 test('교사 로그인 → 룸 생성 → 학생 입장', async ({ page, browser, baseURL }) => {
@@ -81,6 +83,22 @@ test('교사 로그인 → 룸 생성 → 학생 입장', async ({ page, browser
     for (const { companyName } of studentContexts) {
       await expect(page.getByText(companyName, { exact: true })).toBeVisible();
     }
+
+    const firstStudent = studentContexts[0];
+    const reentryPage = await firstStudent.context.newPage();
+    await reentryPage.goto('/');
+    await reentryPage.getByPlaceholder('선생님이 안내한 코드 (예: ROOM101)').fill(roomCode);
+    await reentryPage.getByPlaceholder('팀 또는 회사 이름 (예: 한빛전자)').fill(firstStudent.companyName);
+    await reentryPage.getByRole('button', { name: '확인', exact: true }).click();
+    await expect(reentryPage.getByText('운영되고 있는 기업입니다.')).toBeVisible();
+    await expect(reentryPage.getByText('테스트학생1', { exact: false })).toBeVisible();
+    await reentryPage.getByRole('button', { name: '회사 접속하기' }).click();
+    await expect(reentryPage.getByRole('heading', { name: `🏢 ${firstStudent.companyName}` })).toBeVisible();
+
+    await page.goto(`/student?roomId=${encodeURIComponent(roomCode)}&name=${encodeURIComponent(firstStudent.companyName)}&teacher=1`);
+    await page.getByRole('button', { name: '교사 대시보드로 돌아가기' }).click();
+    await expect(page).toHaveURL(new RegExp(`/teacher\\?roomId=${roomCode}`));
+    await expect(page.getByText(`룸 코드 ${roomCode}`, { exact: true })).toBeVisible();
   } finally {
     await Promise.all(studentContexts.map(({ context }) => context.close()));
 

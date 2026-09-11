@@ -124,6 +124,19 @@ const findLegacyCompanyId = async (roomId: string, companyName: string) => {
 };
 
 export const companyService = {
+  findCompanyByName: async (roomId: string, companyName: string): Promise<Company | null> => {
+    const trimmedName = validateCompanyName(companyName);
+    const normalizedName = normalizeCompanyName(trimmedName);
+    const roomSnapshot = await getDoc(doc(db, 'rooms', roomId.trim()));
+    if (!roomSnapshot.exists()) throw new Error('ROOM_NOT_FOUND');
+
+    const nameIndexSnapshot = await getDoc(doc(db, 'rooms', roomId.trim(), 'companyNames', companyNameIndexId(normalizedName)));
+    const indexedCompanyId = nameIndexSnapshot.exists() ? nameIndexSnapshot.data().companyId as string : null;
+    const companyId = indexedCompanyId || await findLegacyCompanyId(roomId.trim(), trimmedName);
+    if (!companyId) return null;
+    const companySnapshot = await getDoc(doc(db, 'rooms', roomId.trim(), 'companies', companyId));
+    return companySnapshot.exists() ? normalizeCompany(companySnapshot.data() as Company) : null;
+  },
   updateStudentMembers: async (roomId: string, companyId: string, studentMembers: StudentMember[]): Promise<void> => {
     const normalizedMembers = studentMembers
       .map((member) => ({ studentNumber: member.studentNumber.trim(), name: member.name.trim() }))

@@ -1,9 +1,9 @@
 process.env.BALANCE_IMPORT_ONLY = '1';
 const { search } = await import('./review-ten-rounds.mjs');
-const { MARKETS } = await import('../src/types/domain.ts');
+const { MARKETS, GAME_THEORY_MARKETS } = await import('../src/types/domain.ts');
 if (process.argv.includes('--phone')) {
   for (const first of [4,6]) for (const boost of [.2,.4]) for (const size of [120,180]) {
-    const r = search({...MARKETS[3],firstWorkerProductivity:first,machineProductivityBoost:boost,demandAtBasePrice:size},{beamWidth:3});
+    const r = search({...GAME_THEORY_MARKETS[0],firstWorkerProductivity:first,machineProductivityBoost:boost,demandAtBasePrice:size},{beamWidth:3});
     console.log(JSON.stringify({first,boost,size,profit:r.profit,firstProfit:r.rounds[0].profit,last:r.rounds.at(-1)}));
   }
 } else {

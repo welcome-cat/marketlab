@@ -471,6 +471,62 @@ export const calculateMarketClearing = (market: Market, plans: ProductionPlan[],
   };
 };
 
+const SMARTPHONE_SALE_DURATION_MS = 30000;
+const SMARTPHONE_SALE_MONTHS = 4;
+
+const priceAt = (plan: ProductionPlan, timestamp: number) => {
+  const history = [...(plan.askingPriceHistory || [])].sort((a, b) => a.changedAt - b.changedAt);
+  let price = history[0]?.price || plan.askingPrice || plan.announcedPrice;
+  for (const change of history) {
+    if (change.changedAt > timestamp) break;
+    price = change.price;
+  }
+  return price;
+};
+
+// 스마트폰 판매를 4개의 교육용 '개월'로 나눠 계산한다. 각 기간 시작 시점의
+// 가격으로 공동 수요를 배분하므로 이후 가격 변경이 이미 발생한 매출을 바꾸지 않는다.
+export const calculateDynamicSmartphoneSales = (
+  market: Market,
+  plans: ProductionPlan[],
+  sellingStartedAt: number,
+  elapsedMs: number,
+  demandMultiplier = 1,
+  ecoPreferenceBoost = 0,
+) => {
+  const soldByPlan = new Map(plans.map((plan) => [plan.id, 0]));
+  const revenueByPlan = new Map(plans.map((plan) => [plan.id, 0]));
+  const saleSegmentsByPlan = new Map(plans.map((plan) => [plan.id, [] as NonNullable<ProductionPlan['saleSegments']>]));
+  const remainingByPlan = new Map(plans.map((plan) => [plan.id, plan.offeredQuantity ?? plan.producedQuantity]));
+  const boundedElapsed = Math.max(0, Math.min(SMARTPHONE_SALE_DURATION_MS, elapsedMs));
+  const monthDuration = SMARTPHONE_SALE_DURATION_MS / SMARTPHONE_SALE_MONTHS;
+
+  for (let month = 1; month <= SMARTPHONE_SALE_MONTHS; month += 1) {
+    const monthStart = (month - 1) * monthDuration;
+    const activeDuration = Math.max(0, Math.min(monthDuration, boundedElapsed - monthStart));
+    if (activeDuration <= 0) break;
+    const periodShare = activeDuration / SMARTPHONE_SALE_DURATION_MS;
+    const periodPlans = plans.map((plan) => ({
+      ...plan,
+      askingPrice: priceAt(plan, sellingStartedAt + monthStart),
+      offeredQuantity: remainingByPlan.get(plan.id) || 0,
+      producedQuantity: remainingByPlan.get(plan.id) || 0,
+    }));
+    const clearing = calculateMarketClearing(market, periodPlans, demandMultiplier * periodShare, ecoPreferenceBoost);
+    periodPlans.forEach((periodPlan) => {
+      const sold = clearing.soldByPlan.get(periodPlan.id) || 0;
+      const price = periodPlan.askingPrice || market.announcedPrice;
+      const revenue = sold * price;
+      remainingByPlan.set(periodPlan.id, Math.max(0, (remainingByPlan.get(periodPlan.id) || 0) - sold));
+      soldByPlan.set(periodPlan.id, (soldByPlan.get(periodPlan.id) || 0) + sold);
+      revenueByPlan.set(periodPlan.id, (revenueByPlan.get(periodPlan.id) || 0) + revenue);
+      saleSegmentsByPlan.get(periodPlan.id)?.push({ month, price, soldQuantity: sold, revenue });
+    });
+  }
+
+  return { soldByPlan, revenueByPlan, saleSegmentsByPlan };
+};
+
 export const productionService = {
   borrow: async (roomId: string, companyId: string, amount: number): Promise<void> => {
     if (!Number.isInteger(amount) || amount <= 0) throw new Error('INVALID_LOAN_AMOUNT');
@@ -690,7 +746,16 @@ export const productionService = {
       const minimum = Math.max(100, Math.round(plan.announcedPrice * (prediction === 'DOWN' ? 0.7 : prediction === 'SAME' ? 0.95 : 1)));
       const maximum = Math.round(plan.announcedPrice * (prediction === 'UP' ? 1.3 : prediction === 'SAME' ? 1.05 : 1));
       if (nextPrice < minimum || nextPrice > maximum) throw new Error('PRICE_OUT_OF_RANGE');
-      transaction.update(planRef, { askingPrice: Math.round(nextPrice), updatedAt: Date.now() });
+      const now = Date.now();
+      const roundedPrice = Math.round(nextPrice);
+      const existingHistory = plan.askingPriceHistory || [];
+      const askingPriceHistory = isSelling
+        ? [
+            ...(existingHistory.length > 0 ? existingHistory : [{ price: plan.askingPrice || plan.announcedPrice, changedAt: room.sellingStartedAt || now }]),
+            { price: roundedPrice, changedAt: now },
+          ].slice(-80)
+        : [];
+      transaction.update(planRef, { askingPrice: roundedPrice, askingPriceHistory, updatedAt: now });
     });
   },
 
@@ -765,23 +830,33 @@ export const productionService = {
           const demandEvent = room.demandEvents.find((event) => event.marketId === market.id);
           const demandMultiplier = 1; // News is already included in the persisted market state.
           const clearing = calculateMarketClearing(market, marketPlans, demandMultiplier, demandEvent?.ecoPreferenceBoost || 0);
+          const dynamicSales = market.id === 'market_smartphone'
+            ? calculateDynamicSmartphoneSales(market, marketPlans, room.sellingStartedAt || now - SMARTPHONE_SALE_DURATION_MS, SMARTPHONE_SALE_DURATION_MS, demandMultiplier, demandEvent?.ecoPreferenceBoost || 0)
+            : null;
+          const soldByPlan = dynamicSales?.soldByPlan || clearing.soldByPlan;
+          const totalRevenue = marketPlans.reduce((sum, plan) => sum + (dynamicSales
+            ? dynamicSales.revenueByPlan.get(plan.id) || 0
+            : (soldByPlan.get(plan.id) || 0) * (market.priceControl === 'FIRM_PRICE' ? (plan.askingPrice || clearing.marketPrice || 0) : (clearing.marketPrice || 0))), 0);
+          const tradedQuantity = [...soldByPlan.values()].reduce((sum, quantity) => sum + quantity, 0);
+          const settledMarketPrice = dynamicSales && tradedQuantity > 0 ? Math.round(totalRevenue / tradedQuantity) : clearing.marketPrice;
         const resultRef = doc(db, 'rooms', roomId, 'marketResults', `${room.currentRound}_${market.id}`);
         const result: MarketRoundResult = {
           id: `${room.currentRound}_${market.id}`, roomId, roundNumber: room.currentRound,
           marketId: market.id, marketName: market.name, referencePrice: market.announcedPrice,
-          marketPrice: clearing.marketPrice, demandQuantity: clearing.demandQuantity,
-          totalSupply: clearing.totalSupply, tradedQuantity: clearing.tradedQuantity,
-          unsoldQuantity: clearing.totalSupply - clearing.tradedQuantity,
+          marketPrice: settledMarketPrice, demandQuantity: clearing.demandQuantity,
+          totalSupply: clearing.totalSupply, tradedQuantity,
+          unsoldQuantity: clearing.totalSupply - tradedQuantity,
           participantCount: clearing.participantCount,
-          totalRevenue: marketPlans.reduce((sum, plan) => sum + (clearing.soldByPlan.get(plan.id) || 0) * (market.priceControl === 'FIRM_PRICE' ? (plan.askingPrice || clearing.marketPrice || 0) : (clearing.marketPrice || 0)), 0),
+          totalRevenue,
           demandEventTitle: room.demandEvents.find((event) => event.marketId === market.id)?.title,
           settledAt: now,
         };
         transaction.set(resultRef, result);
 
         marketPlans.forEach((plan) => {
-          const soldQuantity = clearing.soldByPlan.get(plan.id) || 0;
-          const revenue = soldQuantity * (market.priceControl === 'FIRM_PRICE' ? (plan.askingPrice || clearing.marketPrice || 0) : (clearing.marketPrice || 0));
+          const soldQuantity = soldByPlan.get(plan.id) || 0;
+          const revenue = dynamicSales?.revenueByPlan.get(plan.id)
+            ?? soldQuantity * (market.priceControl === 'FIRM_PRICE' ? (plan.askingPrice || clearing.marketPrice || 0) : (clearing.marketPrice || 0));
           const companySnapshot = companySnapshots.get(plan.companyId);
           const inventorySnapshot = inventorySnapshots.get(plan.id);
           if (!companySnapshot?.exists() || !inventorySnapshot?.exists()) return;
@@ -806,7 +881,10 @@ export const productionService = {
             updatedAt: now,
           });
           transaction.update(doc(db, 'rooms', roomId, 'productionPlans', plan.id), {
-            soldQuantity, marketPrice: market.priceControl === 'FIRM_PRICE' ? (plan.askingPrice || clearing.marketPrice) : clearing.marketPrice, revenue,
+            soldQuantity,
+            marketPrice: dynamicSales && soldQuantity > 0 ? Math.round(revenue / soldQuantity) : market.priceControl === 'FIRM_PRICE' ? (plan.askingPrice || clearing.marketPrice) : clearing.marketPrice,
+            saleSegments: dynamicSales?.saleSegmentsByPlan.get(plan.id) || [],
+            revenue,
             profit: revenue - (plan.productionCost + (plan.allocatedInvestmentCost || plan.investmentCost)) - interestCost,
             operatingProfit: revenue - plan.productionCost,
             economicProfit,
@@ -817,7 +895,7 @@ export const productionService = {
         });
         return {
           ...market,
-          publicPrice: clearing.marketPrice ?? market.publicPrice ?? market.announcedPrice,
+          publicPrice: settledMarketPrice ?? market.publicPrice ?? market.announcedPrice,
           publicPriceRound: room.currentRound,
         };
       });

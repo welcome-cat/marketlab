@@ -1,9 +1,9 @@
 process.env.BALANCE_IMPORT_ONLY = '1';
 await import('./review-ten-rounds.mjs');
-const { MARKETS, EMPTY_UPGRADES, DEFAULT_UNLOCK_ROUNDS } = await import('../src/types/domain.ts');
+const { GAME_THEORY_MARKETS, EMPTY_UPGRADES, DEFAULT_UNLOCK_ROUNDS } = await import('../src/types/domain.ts');
 const { calculateProductionQuote: quote, calculateMarketClearing: clear } = await import('../src/services/productionService.ts');
 export function simulatePhone(config = {}, entries = [1], horizon = 15, aggressive = false) {
-  const market = {...MARKETS[3], ...config};
+  const market = {...GAME_THEORY_MARKETS[0], ...config};
   const firms = entries.map((entry,i) => ({entry,id:String(i),cash:300000,employeeCount:1,lastHiringRound:0,machineCount:1,machineAssets:[],upgrades:{...EMPTY_UPGRADES},technologyLevel:0,productionProfile:{firstWorkerProductivity:18,productivityDecline:4,technologyBoostRate:0,researchBaseCost:14000},profit:0,inventory:0,history:[]}));
   let reference = market.basePrice;
   for (let round=1;round<=horizon;round++) {

@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
 process.env.BALANCE_IMPORT_ONLY='1';
 const {search}=await import('./review-ten-rounds.mjs');
-const {MARKETS,EMPTY_UPGRADES}=await import('../src/types/domain.ts');
+const {MARKETS,GAME_THEORY_MARKETS,EMPTY_UPGRADES}=await import('../src/types/domain.ts');
 const {normalizeRoom}=await import('../src/services/roomService.ts');
 const {calculateWorkerMarginalProduct:mp,calculateMarketClearing:clear,calculateProductionQuote:quote}=await import('../src/services/productionService.ts');
-const migrated=normalizeRoom('offline',{markets:[{...MARKETS[3],firstWorkerProductivity:16.2,smartphoneBalanceVersion:undefined}]});
-assert.ok(Math.abs(migrated.markets[3].firstWorkerProductivity-2.7)<1e-9);
-assert.equal(normalizeRoom('offline',migrated).markets[3].firstWorkerProductivity,migrated.markets[3].firstWorkerProductivity);
+const migrated=normalizeRoom('offline',{markets:MARKETS});
+assert.deepEqual(migrated.markets.map((market)=>market.id), ['market_tumbler','market_toy','market_shoes']);
 const firm={cash:300000,employeeCount:1,lastHiringRound:0,machineAssets:[],upgrades:{...EMPTY_UPGRADES},technologyLevel:0,productionProfile:{firstWorkerProductivity:18,technologyBoostRate:0}};
 for(const market of MARKETS){
  assert.ok(mp(firm,5,1,0,market)>mp(firm,6,1,0,market));
@@ -15,7 +14,7 @@ for(const market of MARKETS){
 }
 for(const n of [1,2,3,4,6]){
  const plans=Array.from({length:n},(_,i)=>({id:String(i),companyId:String(i),askingPrice:14000,offeredQuantity:100,producedQuantity:100}));
- const result=clear(MARKETS[3],plans);
+ const result=clear(GAME_THEORY_MARKETS[0],plans);
  assert.equal(result.tradedQuantity,[...result.soldByPlan.values()].reduce((a,b)=>a+b,0));
  assert.ok([...result.soldByPlan.values()].every(q=>Number.isInteger(q)&&q>=0&&q<=100));
 }
