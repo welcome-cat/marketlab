@@ -144,6 +144,15 @@ const marketMachineAssets = (company: Company, marketId: string) => (company.mac
 export const getMarketMachineCount = (company: Company, marketId: string) => 1 + (company.machineAssets || []).filter((asset) => asset.marketId === marketId || asset.marketId === '*').reduce((sum, asset) => sum + asset.quantity, 0);
 export const machineDepreciationRate = (asset: MachineAssetLot, currentRound: number) =>
   Math.min(1, Math.max(0, currentRound - (asset.lastRepairedRound ?? asset.purchasedRound)) * 0.05);
+export const machineCurrentValue = (asset: MachineAssetLot, currentRound: number) =>
+  Math.round(asset.purchasePrice * (1 - machineDepreciationRate(asset, currentRound))) * asset.quantity;
+export const companyMachineAssetValue = (company: Company, currentRound: number) =>
+  (company.machineAssets || []).reduce((sum, asset) => sum + machineCurrentValue(asset, currentRound), 0);
+export const companyMachineDepreciationRate = (company: Company, currentRound: number) => {
+  const assets = company.machineAssets || [];
+  const quantity = assets.reduce((sum, asset) => sum + asset.quantity, 0);
+  return quantity > 0 ? assets.reduce((sum, asset) => sum + machineDepreciationRate(asset, currentRound) * asset.quantity, 0) / quantity : 0;
+};
 const resaleRate = (asset: MachineAssetLot, currentRound: number) =>
   Math.max(0, 0.3 - Math.max(0, currentRound - asset.purchasedRound - 1) * 0.05);
 export const calculateMachineRepairCost = (company: Company, marketId: string, quantity: number, currentRound: number) =>
@@ -727,6 +736,8 @@ export const productionService = {
       where('roundNumber', '==', currentRoom.currentRound),
     ));
     const candidatePlanRefs = plansSnapshot.docs.map((item) => item.ref);
+    const companiesSnapshot = await getDocs(collection(db, 'rooms', roomId, 'companies'));
+    const candidateCompanyRefs = companiesSnapshot.docs.map((item) => item.ref);
 
     await runTransaction(db, async (transaction) => {
       const freshRoomSnapshot = await transaction.get(roomRef);
@@ -740,15 +751,15 @@ export const productionService = {
       const plans = planSnapshots.filter((item) => item.exists()).map((item) => item.data() as ProductionPlan);
       const companySnapshots = new Map<string, Awaited<ReturnType<typeof transaction.get>>>();
       const inventorySnapshots = new Map<string, Awaited<ReturnType<typeof transaction.get>>>();
+      for (const companyRef of candidateCompanyRefs) companySnapshots.set(companyRef.id, await transaction.get(companyRef));
       for (const plan of plans) {
-        const companyRef = doc(db, 'rooms', roomId, 'companies', plan.companyId);
         const inventoryRef = doc(db, 'rooms', roomId, 'companies', plan.companyId, 'inventory', plan.productId);
-        companySnapshots.set(plan.id, await transaction.get(companyRef));
         inventorySnapshots.set(plan.id, await transaction.get(inventoryRef));
       }
 
       const now = Date.now();
       const winnerCandidates: NonNullable<Room['roundWinner']>[] = [];
+      const settledCashByCompany = new Map<string, number>();
       const nextMarkets = room.markets.map((market) => {
         const marketPlans = plans.filter((plan) => plan.productId === market.id);
           const demandEvent = room.demandEvents.find((event) => event.marketId === market.id);
@@ -771,7 +782,7 @@ export const productionService = {
         marketPlans.forEach((plan) => {
           const soldQuantity = clearing.soldByPlan.get(plan.id) || 0;
           const revenue = soldQuantity * (market.priceControl === 'FIRM_PRICE' ? (plan.askingPrice || clearing.marketPrice || 0) : (clearing.marketPrice || 0));
-          const companySnapshot = companySnapshots.get(plan.id);
+          const companySnapshot = companySnapshots.get(plan.companyId);
           const inventorySnapshot = inventorySnapshots.get(plan.id);
           if (!companySnapshot?.exists() || !inventorySnapshot?.exists()) return;
           const company = companySnapshot.data() as Company;
@@ -787,7 +798,9 @@ export const productionService = {
             revenue,
             economicProfit,
           });
-          transaction.update(companySnapshot.ref, { cash: company.cash + revenue - interestCost });
+          const settledCash = company.cash + revenue - interestCost;
+          settledCashByCompany.set(company.id, settledCash);
+          transaction.update(companySnapshot.ref, { cash: settledCash });
           transaction.update(inventorySnapshot.ref, {
             quantity: Math.max(0, inventory.quantity - soldQuantity),
             updatedAt: now,
@@ -810,7 +823,25 @@ export const productionService = {
       });
 
       const roundWinner = winnerCandidates.sort((a, b) => b.economicProfit - a.economicProfit || a.companyName.localeCompare(b.companyName))[0] || null;
-      transaction.update(roomRef, { roundPhase: 'RESULT', markets: nextMarkets, roundWinner });
+      const financialCandidates = [...companySnapshots.values()].filter((snapshot) => snapshot.exists()).map((snapshot) => {
+        const company = snapshot.data() as Company;
+        const netCash = (settledCashByCompany.get(company.id) ?? company.cash) - (company.loanBalance || 0);
+        const machineValue = companyMachineAssetValue(company, room.currentRound);
+        const marketName = plans.find((plan) => plan.companyId === company.id)?.marketName
+          || room.markets.find((market) => market.id === company.currentMarketId)?.name
+          || '시장 미선택';
+        return { companyId: company.id, companyName: company.name, marketName, netCash, machineValue, assets: netCash + machineValue };
+      });
+      const profit = roundWinner ? { companyId: roundWinner.companyId, companyName: roundWinner.companyName, marketName: roundWinner.marketName, value: roundWinner.economicProfit, soldQuantity: roundWinner.soldQuantity, revenue: roundWinner.revenue } : null;
+      const cash = financialCandidates.sort((a, b) => b.netCash - a.netCash || a.companyName.localeCompare(b.companyName))[0];
+      const assets = [...financialCandidates].sort((a, b) => b.assets - a.assets || a.companyName.localeCompare(b.companyName))[0];
+      const roundLeaders = profit && cash && assets ? {
+        roundNumber: room.currentRound,
+        profit,
+        cash: { companyId: cash.companyId, companyName: cash.companyName, marketName: cash.marketName, value: cash.netCash, netCash: cash.netCash, machineValue: cash.machineValue },
+        assets: { companyId: assets.companyId, companyName: assets.companyName, marketName: assets.marketName, value: assets.assets, netCash: assets.netCash, machineValue: assets.machineValue },
+      } : null;
+      transaction.update(roomRef, { roundPhase: 'RESULT', markets: nextMarkets, roundWinner, roundLeaders });
     });
     } catch (error) {
       await runTransaction(db, async (transaction) => {

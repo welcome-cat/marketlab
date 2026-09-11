@@ -5,12 +5,14 @@ type Step = { target: string; title: string; body: string };
 const production: Step[] = [
   { target: '.student-company', title: '여러분은 지금부터 기업을 운영합니다', body: '시장을 선택하고 직원을 고용해 생산량을 결정하세요. 생산 확정 후 판매 단계가 열리면 상품을 판매합니다. 모두 팔리는 것은 아닙니다. 신문과 거래 결과를 보며 선택을 개선하세요. 현금과 빚은 구분하며 최종 평가는 선생님이 정합니다.' },
   { target: '.student-diagnosis > summary', title: '우리 기업 진단서', body: '업종 경험과 시장별 모의 결과를 비교하세요. 진단서의 계산은 실제 생산을 확정하지 않습니다.' },
+  { target: '.diagnosis-simulation', title: '시장별 모의 생산', body: '확정한 기업 특성이 각 시장의 생산비와 이윤에 어떤 차이를 만드는지 비교하세요. 튜토리얼이 끝나면 이 영역은 다시 축소됩니다.' },
   { target: '.student-market > div', title: '진출 시장 선택', body: '이전 거래가격과 재료비를 비교하세요. 시장 이동에는 기존 기계·재고 정산과 새 진입 비용이 생길 수 있습니다.' },
   { target: '.student-news > div article', title: '신문에서 단서 찾기', body: '소비자 리포트와 생산 동향을 나누어 읽으세요. 이전 거래가격은 이번 판매가격을 보장하지 않습니다.' },
   { target: '[data-tutorial="workers"]', title: '고용 노동자 수', body: '노동자를 늘리면 생산능력이 커지지만 추가 노동자의 한계생산물은 체감합니다. 확정 후에는 고용 계획을 바꿀 수 없습니다.' },
   { target: '.production-curve-column > div:first-child', title: '희망 공급량', body: '생산능력과 현금 한도 안에서 생산량을 정하세요. 더 많이 만든다고 반드시 모두 판매되는 것은 아닙니다.' },
   { target: '.curve-toggle-actions', title: '한계비용 곡선', body: '안내 종료 후 곡선보기 버튼으로 추가 생산 비용과 이전 거래가격을 비교하세요. 이전 가격은 판단의 참고값입니다.' },
-  { target: '.student-investment > div', title: '기계와 업그레이드', body: '기계는 한계생산 체감을 완화하고 훈련은 기본 생산성을 높입니다. 해금 후 기계를 라운드당 최대 2대 구입할 수 있습니다.' },
+  { target: '.student-investment', title: '기계 구입·매각과 업그레이드', body: '기계를 구입·매각·수리하고 기업 업그레이드를 선택하는 곳입니다. 실제 수업에서는 정해진 라운드에 해금되지만 튜토리얼에서는 구조를 미리 보여줍니다.' },
+  { target: '.student-finance', title: '대출과 원금 상환', body: '자산을 바탕으로 대출을 받고 원금을 상환하는 곳입니다. 대출에는 이자가 붙고 보유 현금과 빚은 따로 계산됩니다.' },
   { target: '.student-cost > div:first-of-type', title: '비용 확인', body: '생산비와 투자비, 평균비용과 한계비용을 구분하세요. 투자에 지출한 현금 전부가 이번 라운드 비용은 아닙니다.' },
   { target: '.student-cost > div:nth-of-type(2)', title: '매출 / 이윤', body: '전량 판매를 가정한 예상치입니다. 실제 판매량과 가격에 따라 달라집니다. 이윤과 현금은 같은 뜻이 아닙니다.' },
   { target: '.student-cost > button', title: '생산 결정 확정', body: '고용·투자·생산량과 가격 방향 예측을 검토하세요. 안내 중에는 실행되지 않습니다. 이미 확정했다면 다음 라운드에 변경할 수 있습니다.' },
@@ -23,7 +25,7 @@ const results: Step[] = [
   { target: '.student-result', title: '실제 거래 결과', body: '실제 판매량·매출·이윤·현금 변화를 확인하세요. 예상과 다른 이유를 가격과 비용, 미판매 재고에서 찾아보세요.' },
   { target: '.student-reflection-shell', title: '경제 활동지', body: '교사가 지정한 라운드에 활동지를 작성하세요. 이번 선택을 돌아보고 다음 라운드에서 바꿀 결정을 적어보세요.' },
 ];
-export function StudentTutorial({ phase }: { phase: string }) {
+export function StudentTutorial({ phase, onActiveChange }: { phase: string; onActiveChange?: (active: boolean) => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const ring = useRef<HTMLDivElement>(null);
   const panel = useRef<HTMLElement>(null);
@@ -63,12 +65,15 @@ export function StudentTutorial({ phase }: { phase: string }) {
     position();
     return () => { cancelAnimationFrame(frame); document.body.style.paddingBottom = previousPadding; details.forEach(([node, open]) => { node.open = open; }); };
   }, [current]);
-  const stop = () => { dialog.current?.close(); setSteps([]); setIndex(0); };
+  const stop = () => { dialog.current?.close(); setSteps([]); setIndex(0); onActiveChange?.(false); };
   const start = () => {
-    const candidates = phase === 'SELLING' ? selling : phase === 'RESULT' ? results : production;
-    const available = candidates.filter(step => (() => { const el = document.querySelector<HTMLElement>(step.target); return el && !el.closest('[style*="display: none"]'); })());
-    setSteps(available.length ? available : [{ target: '.student-round', title: '현재 라운드 안내', body: '교사의 다음 진행을 기다려주세요. 단계가 바뀌면 안내를 다시 열 수 있습니다.' }]);
-    setIndex(0);
+    onActiveChange?.(true);
+    const candidates = phase === 'RESULT' ? [...results, ...production, ...selling] : [...production, ...selling];
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const available = candidates.filter(step => (() => { const el = document.querySelector<HTMLElement>(step.target); return el && !el.closest('[style*="display: none"]'); })());
+      setSteps(available.length ? available : [{ target: '.student-round', title: '현재 라운드 안내', body: '교사의 다음 진행을 기다려주세요. 단계가 바뀌면 안내를 다시 열 수 있습니다.' }]);
+      setIndex(0);
+    }));
   };
   return <>
     <button type="button" className="tutorial-launch" onClick={start}>튜토리얼</button>

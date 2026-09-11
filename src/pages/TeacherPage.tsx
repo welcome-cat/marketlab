@@ -1,7 +1,7 @@
 import { transitionMarkets, withRecoveryNews } from '../services/roomService';
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { calculateMarketClearing, companyService, productionService, reflectionService, roomService, scaleMarketEventFactor } from '../services';
+import { calculateMarketClearing, companyMachineAssetValue, companyMachineDepreciationRate, companyService, productionService, reflectionService, roomService, scaleMarketEventFactor } from '../services';
 import type { Company, DemandEvent, EconomicsQuiz, EventIntensity, LearningReflection, MarketRoundResult, ProductionPlan, Room, UnlockRounds } from '../types/domain';
 import { DEFAULT_ECONOMICS_QUIZZES, DEFAULT_REFLECTION_SHEETS, DEFAULT_UNLOCK_ROUNDS, DEMAND_EVENT_OPTIONS, EVENT_INTENSITY_LABEL, EVENT_INTENSITY_SCALE, MARKETS, UPGRADE_OPTIONS } from '../types/domain';
 import { MarketCurveChart } from '../components/MarketCurveChart';
@@ -11,6 +11,7 @@ import { composeEventArticle, defaultNewsTemplates, getRecoveryMessage, RECOVERY
 
 const statusLabel = { WAITING: '시작 전', RUNNING: '진행 중', FINISHED: '종료' } as const;
 type MarketInfluenceDraft = Record<string, { studentSupplyWeight: number; demandEventEffectScale: number; supplyEventEffectScale: number }>;
+type CompanySortKey = 'name' | 'profit' | 'assets' | 'cash' | 'machines' | 'workers' | 'production' | 'sales';
 const influenceFromMarkets = (markets: Room['markets']): MarketInfluenceDraft => Object.fromEntries(markets.map((market) => [market.id, { studentSupplyWeight: market.studentSupplyWeight, demandEventEffectScale: market.demandEventEffectScale, supplyEventEffectScale: market.supplyEventEffectScale }]));
 const eventDirectionLabel = (option: (typeof DEMAND_EVENT_OPTIONS)[number], subject: '수요' | '공급') => {
   if (option.id === 'eco_preference') return '이벤트';
@@ -22,6 +23,12 @@ const eventDirectionLabel = (option: (typeof DEMAND_EVENT_OPTIONS)[number], subj
 };
 const eventOptionLabel = (option: (typeof DEMAND_EVENT_OPTIONS)[number], subject: '수요' | '공급') =>
   option.factor === 'BASELINE' ? `${subject} 변화 없음` : `${eventDirectionLabel(option, subject)}: ${option.title}`;
+const automaticCost = (base: number, factor: number | undefined, intensity: EventIntensity) =>
+  Math.round(base * scaleMarketEventFactor(factor, EVENT_INTENSITY_SCALE[intensity]));
+const exactTargetMultiplier = (base: number, target: number, intensity: EventIntensity) => {
+  const scale = EVENT_INTENSITY_SCALE[intensity];
+  return 1 + (target / Math.max(1, base) - 1) / scale;
+};
 const DEFAULT_NEWS_TEMPLATES = defaultNewsTemplates();
 const LEGACY_COMBINED_HEADLINE = '시장 현장에 새로운 변수…업계, 소비자와 생산자의 움직임 주시';
 const mergeNewsTemplates = (stored: Room['newsTemplates']) => Object.fromEntries(Object.entries(DEFAULT_NEWS_TEMPLATES).map(([id, fallback]) => {
@@ -72,6 +79,7 @@ export const TeacherPage: React.FC = () => {
   const [showReflectionSettings, setShowReflectionSettings] = useState(false);
   const [newsTemplateDraft, setNewsTemplateDraft] = useState<Record<string, { headline: string; body: string }>>(DEFAULT_NEWS_TEMPLATES);
   const [marketInfluenceDraft, setMarketInfluenceDraft] = useState<MarketInfluenceDraft>(() => influenceFromMarkets(MARKETS));
+  const [companySortKey, setCompanySortKey] = useState<CompanySortKey>('name');
   const automaticSettlementKey = useRef('');
   const eventDraftRoundKey = useRef('');
   const activeRoomId = activeRoom?.id;
@@ -299,12 +307,13 @@ export const TeacherPage: React.FC = () => {
       market.id,
       demandChoices[Math.floor(Math.random() * demandChoices.length)].id,
     ])));
-    setSupplySelections(Object.fromEntries(activeRoom.markets.map((market) => [market.id, supplyChoices.filter((option) => option.id !== 'rice_typhoon' || market.id === 'market_toy')[Math.floor(Math.random() * supplyChoices.filter((option) => option.id !== 'rice_typhoon' || market.id === 'market_toy').length)].id])));
+    setSupplySelections(Object.fromEntries(activeRoom.markets.map((market) => [market.id, market.priceControl === 'FIRM_PRICE' ? 'supply_baseline' : supplyChoices.filter((option) => option.id !== 'rice_typhoon' || market.id === 'market_toy')[Math.floor(Math.random() * supplyChoices.filter((option) => option.id !== 'rice_typhoon' || market.id === 'market_toy').length)].id])));
   };
 
   const draftEvents: DemandEvent[] = activeRoom ? activeRoom.markets.map((market): DemandEvent => {
         const option = DEMAND_EVENT_OPTIONS.find((item) => item.id === demandSelections[market.id]) || DEMAND_EVENT_OPTIONS.find((item) => item.id === 'baseline')!;
-        const supplyOption = DEMAND_EVENT_OPTIONS.find((item) => item.id === supplySelections[market.id]) || DEMAND_EVENT_OPTIONS.find((item) => item.id === 'supply_baseline')!;
+        const configuredSupplyOption = DEMAND_EVENT_OPTIONS.find((item) => item.id === supplySelections[market.id]) || DEMAND_EVENT_OPTIONS.find((item) => item.id === 'supply_baseline')!;
+        const supplyOption = market.priceControl === 'FIRM_PRICE' ? DEMAND_EVENT_OPTIONS.find((item) => item.id === 'supply_baseline')! : configuredSupplyOption;
         const demandIntensity = demandIntensities[market.id] || 'MEDIUM';
         const supplyIntensity = supplyIntensities[market.id] || 'MEDIUM';
         const isTaxPolicy = supplyOption.id === 'producer_tax' || supplyOption.id === 'producer_subsidy';
@@ -312,7 +321,8 @@ export const TeacherPage: React.FC = () => {
         const demandTemplate = newsTemplateDraft[option.id]; const supplyTemplate = newsTemplateDraft[supplyOption.id];
         const demandArticle = composeEventArticle(market, option, 'CONSUMER');
         const supplyArticle = composeEventArticle(market, supplyOption, 'PRODUCTION');
-        return { marketEffectVersion: 2, marketId: market.id, optionId: option.id, factor: option.factor, effectType: 'DEMAND', title: option.title, description: option.description, multiplier: option.multiplier, ecoPreferenceBoost: option.ecoPreferenceBoost || 0, demandIntensity, supplyIntensity, supplyOptionId: supplyOption.id, supplyFactor: supplyOption.factor, supplyTitle: supplyOption.title, supplyDescription: supplyOption.description, supplyMaterialMultiplier: supplyOption.id.startsWith('material_') && materialPriceDraft[market.id] ? materialPriceDraft[market.id] / Math.max(1, market.materialUnitCost * market.materialCostMultiplier) : supplyOption.materialMultiplier || 1, supplyWageMultiplier: supplyOption.id.startsWith('wage_') && wageDraft[market.id] ? wageDraft[market.id] / Math.max(1, market.wagePerWorker) : supplyOption.wageMultiplier || 1, supplyRentMultiplier: supplyOption.id.startsWith('rent_') && rentDraft[market.id] ? rentDraft[market.id] / Math.max(1, market.rentPerRound) : 1, supplyProductivityMultiplier: supplyOption.productivityMultiplier || 1, supplyCurveMultiplier: isTaxPolicy ? 1 : supplyOption.supplyMultiplier || 1, producerTaxPerUnit: supplyOption.id === 'producer_tax' ? Math.max(0, taxDraft[market.id] || 0) : 0, producerSubsidyPerUnit: supplyOption.id === 'producer_subsidy' ? Math.max(0, subsidyDraft[market.id] || 0) : 0, disasterLossChance: supplyOption.id === 'rice_typhoon' ? Math.max(0, Math.min(1, (disasterChanceDraft[market.id] || 40) / 100)) : 0, disasterLossRate: supplyOption.id === 'rice_typhoon' ? Math.max(0, Math.min(1, (disasterLossDraft[market.id] || 30) / 100)) : 0, articleHeadline: edit?.headline?.trim() || demandTemplate?.headline || demandArticle.headline, articleBody: edit?.body?.trim() || demandTemplate?.body || demandArticle.body, supplyArticleHeadline: edit?.supplyHeadline?.trim() || supplyTemplate?.headline || supplyArticle.headline, supplyArticleBody: edit?.supplyBody?.trim() || supplyTemplate?.body || supplyArticle.body, generatedBy: 'TEMPLATE' };
+        const defaultRentMultiplier = supplyOption.id === 'rent_up' ? 1.1 : supplyOption.id === 'rent_down' ? 0.9 : 1;
+        return { marketEffectVersion: 2, marketId: market.id, optionId: option.id, factor: option.factor, effectType: 'DEMAND', title: option.title, description: option.description, multiplier: option.multiplier, ecoPreferenceBoost: option.ecoPreferenceBoost || 0, demandIntensity, supplyIntensity, supplyOptionId: supplyOption.id, supplyFactor: supplyOption.factor, supplyTitle: supplyOption.title, supplyDescription: supplyOption.description, supplyMaterialMultiplier: supplyOption.id.startsWith('material_') && materialPriceDraft[market.id] ? exactTargetMultiplier(market.materialUnitCost * market.materialCostMultiplier, materialPriceDraft[market.id], supplyIntensity) : supplyOption.materialMultiplier || 1, supplyWageMultiplier: supplyOption.id.startsWith('wage_') && wageDraft[market.id] ? exactTargetMultiplier(market.wagePerWorker, wageDraft[market.id], supplyIntensity) : supplyOption.wageMultiplier || 1, supplyRentMultiplier: supplyOption.id.startsWith('rent_') && rentDraft[market.id] ? exactTargetMultiplier(market.rentPerRound, rentDraft[market.id], supplyIntensity) : defaultRentMultiplier, supplyProductivityMultiplier: supplyOption.productivityMultiplier || 1, supplyCurveMultiplier: isTaxPolicy ? 1 : supplyOption.supplyMultiplier || 1, producerTaxPerUnit: supplyOption.id === 'producer_tax' ? Math.max(0, taxDraft[market.id] || 0) : 0, producerSubsidyPerUnit: supplyOption.id === 'producer_subsidy' ? Math.max(0, subsidyDraft[market.id] || 0) : 0, disasterLossChance: supplyOption.id === 'rice_typhoon' ? Math.max(0, Math.min(1, (disasterChanceDraft[market.id] || 40) / 100)) : 0, disasterLossRate: supplyOption.id === 'rice_typhoon' ? Math.max(0, Math.min(1, (disasterLossDraft[market.id] || 30) / 100)) : 0, articleHeadline: edit?.headline?.trim() || demandTemplate?.headline || demandArticle.headline, articleBody: edit?.body?.trim() || demandTemplate?.body || demandArticle.body, supplyArticleHeadline: edit?.supplyHeadline?.trim() || supplyTemplate?.headline || supplyArticle.headline, supplyArticleBody: edit?.supplyBody?.trim() || supplyTemplate?.body || supplyArticle.body, generatedBy: 'TEMPLATE' };
       }) : [];
 
   const publicationEvents = withRecoveryNews(draftEvents, activeRoom?.status === 'RUNNING' ? activeRoom.demandEvents : [], newsTemplateDraft);
@@ -375,7 +385,7 @@ export const TeacherPage: React.FC = () => {
 
   const eventForecasts = activeRoom?.markets.map((market) => {
     const option = DEMAND_EVENT_OPTIONS.find((item) => item.id === (demandSelections[market.id] || 'baseline')) || DEMAND_EVENT_OPTIONS.find((item) => item.id === 'baseline')!;
-    const supplyOption = DEMAND_EVENT_OPTIONS.find((item) => item.id === (supplySelections[market.id] || 'supply_baseline')) || DEMAND_EVENT_OPTIONS.find((item) => item.id === 'supply_baseline')!;
+    const supplyOption = market.priceControl === 'FIRM_PRICE' ? DEMAND_EVENT_OPTIONS.find((item) => item.id === 'supply_baseline')! : DEMAND_EVENT_OPTIONS.find((item) => item.id === (supplySelections[market.id] || 'supply_baseline')) || DEMAND_EVENT_OPTIONS.find((item) => item.id === 'supply_baseline')!;
     const supplyScale = EVENT_INTENSITY_SCALE[supplyIntensities[market.id] || 'MEDIUM'];
     const forecastMarket = transitionMarkets(activeRoom, publicationEvents).find(item => item.id === market.id)!;
     return {
@@ -394,6 +404,20 @@ export const TeacherPage: React.FC = () => {
   const showProfits = profitVisibleKey === profitKey;
   const selectedCompany = companies.find((company) => company.id === selectedCompanyId) || null;
   const selectedCompanyPlan = selectedCompany ? roundPlans.find((plan) => plan.companyId === selectedCompany.id) : null;
+  const companyMetric = (company: Company, key: CompanySortKey) => {
+    const plan = roundPlans.find((item) => item.companyId === company.id);
+    if (key === 'profit') return plan?.economicProfit ?? (plan ? ((plan.offeredQuantity ?? plan.producedQuantity) * (plan.askingPrice || plan.announcedPrice) - plan.productionCost - (plan.allocatedInvestmentCost || 0)) : Number.NEGATIVE_INFINITY);
+    if (key === 'assets') return company.cash - (company.loanBalance || 0) + companyMachineAssetValue(company, activeRoom?.currentRound || 1);
+    if (key === 'cash') return company.cash - (company.loanBalance || 0);
+    if (key === 'machines') return plan?.machineCountAfter ?? company.machineCount ?? 1;
+    if (key === 'workers') return plan?.workerCount ?? company.employeeCount ?? 1;
+    if (key === 'production') return plan?.producedQuantity ?? 0;
+    if (key === 'sales') return plan?.soldQuantity ?? plan?.offeredQuantity ?? 0;
+    return 0;
+  };
+  const sortedCompanies = [...companies].sort((a, b) => companySortKey === 'name'
+    ? a.name.localeCompare(b.name, 'ko')
+    : companyMetric(b, companySortKey) - companyMetric(a, companySortKey) || a.name.localeCompare(b.name, 'ko'));
 
   const marketStats = activeRoom?.markets.map((market) => {
     const plans = roundPlans.filter((plan) => plan.productId === market.id);
@@ -620,7 +644,13 @@ export const TeacherPage: React.FC = () => {
           {!canPrepareDemandEvents && <p role="status" style={{ padding: '10px 12px', borderRadius: '8px', background: '#fef3c7', color: '#92400e', fontWeight: 700 }}>현재 라운드가 진행 중입니다. 판매 결과를 확정하면 다음 라운드의 수요·공급 사건과 변화 크기를 설정하고 신문을 발행할 수 있습니다.</p>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))', gap: '12px', marginTop: '14px' }}>{activeRoom.markets.map((market) => {
             const selectedOption = DEMAND_EVENT_OPTIONS.find((option) => option.id === (demandSelections[market.id] || 'baseline')) || DEMAND_EVENT_OPTIONS.find((option) => option.id === 'baseline')!;
-            const selectedSupplyOption = DEMAND_EVENT_OPTIONS.find((option) => option.id === (supplySelections[market.id] || 'supply_baseline')) || DEMAND_EVENT_OPTIONS.find((option) => option.id === 'supply_baseline')!;
+            const supportsSupplyEvents = market.priceControl !== 'FIRM_PRICE';
+            const selectedSupplyOption = supportsSupplyEvents ? DEMAND_EVENT_OPTIONS.find((option) => option.id === (supplySelections[market.id] || 'supply_baseline')) || DEMAND_EVENT_OPTIONS.find((option) => option.id === 'supply_baseline')! : DEMAND_EVENT_OPTIONS.find((option) => option.id === 'supply_baseline')!;
+            const supplyIntensity = supplyIntensities[market.id] || 'MEDIUM';
+            const currentMaterialCost = Math.round(market.materialUnitCost * market.materialCostMultiplier);
+            const suggestedMaterialCost = automaticCost(currentMaterialCost, selectedSupplyOption.materialMultiplier, supplyIntensity);
+            const suggestedWage = automaticCost(market.wagePerWorker, selectedSupplyOption.wageMultiplier, supplyIntensity);
+            const suggestedRent = automaticCost(market.rentPerRound, selectedSupplyOption.id === 'rent_up' ? 1.1 : selectedSupplyOption.id === 'rent_down' ? 0.9 : 1, supplyIntensity);
 
             // 지난 라운드의 단기 충격 해소 여부 확인
             const prevEvent = activeRoom.demandEvents.find((item) => item.marketId === market.id);
@@ -643,14 +673,14 @@ export const TeacherPage: React.FC = () => {
               {hasRecovery && <div style={{ margin: '6px 0', padding: '6px 8px', borderRadius: '6px', background: '#fffbeb', border: '1px solid #fde68a', fontSize: '12px', color: '#92400e', lineHeight: 1.4 }}>
                 <strong>단기 충격 해소:</strong> {recoverySummary}
               </div>}
-              <div className="event-effect-labels"><span>{eventDirectionLabel(selectedOption, '수요')}: {selectedOption.title}</span><span>{eventDirectionLabel(selectedSupplyOption, '공급')}: {selectedSupplyOption.title}</span></div>
+              <div className="event-effect-labels"><span>{eventDirectionLabel(selectedOption, '수요')}: {selectedOption.title}</span><span>{supportsSupplyEvents ? `${eventDirectionLabel(selectedSupplyOption, '공급')}: ${selectedSupplyOption.title}` : '기업별 가격 경쟁 시장 · 공급 사건 미적용'}</span></div>
               <label style={{ display: 'block', marginTop: '8px', fontSize: '12px' }}>수요변동<select value={demandSelections[market.id] || 'baseline'} onChange={(event) => setDemandSelections((current) => ({ ...current, [market.id]: event.target.value }))} style={{ width: '100%', marginTop: '4px', padding: '9px' }}>{DEMAND_EVENT_OPTIONS.filter((option) => option.effectType !== 'SUPPLY').map((option) => <option key={option.id} value={option.id}>{eventOptionLabel(option, '수요')}</option>)}</select></label>
               {selectedOption.factor !== 'BASELINE' && <label style={{ display: 'block', marginTop: '8px', fontSize: '12px' }}>수요 효과 강도<select aria-label={`${market.name} 수요 효과 강도`} value={demandIntensities[market.id] || 'MEDIUM'} onChange={(event) => setDemandIntensities((current) => ({ ...current, [market.id]: event.target.value as EventIntensity }))} style={{ width: '100%', marginTop: '4px', padding: '9px' }}>{Object.entries(EVENT_INTENSITY_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
-              <label style={{ display: 'block', marginTop: '8px', fontSize: '12px' }}>공급변동<select value={supplySelections[market.id] || 'supply_baseline'} onChange={(event) => setSupplySelections((current) => ({ ...current, [market.id]: event.target.value }))} style={{ width: '100%', marginTop: '4px', padding: '9px' }}>{supplyOptions.map((option) => <option key={option.id} value={option.id}>{eventOptionLabel(option, '공급')}</option>)}</select></label>
-              {selectedSupplyOption.factor !== 'BASELINE' && <label style={{ display: 'block', marginTop: '8px', fontSize: '12px' }}>공급 효과 강도<select aria-label={`${market.name} 공급 효과 강도`} value={supplyIntensities[market.id] || 'MEDIUM'} onChange={(event) => setSupplyIntensities((current) => ({ ...current, [market.id]: event.target.value as EventIntensity }))} style={{ width: '100%', marginTop: '4px', padding: '9px' }}>{Object.entries(EVENT_INTENSITY_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
-              {selectedSupplyOption.id.startsWith('material_') && <label style={{ display: 'block', marginTop: '8px' }}>변경 후 단위 재료비<input type="number" min="0" value={materialPriceDraft[market.id] || Math.round(market.materialUnitCost * market.materialCostMultiplier)} onChange={(event) => setMaterialPriceDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label>}
-              {selectedSupplyOption.id.startsWith('wage_') && <label style={{ display: 'block', marginTop: '8px' }}>변경 후 라운드 임금<input type="number" min="0" value={wageDraft[market.id] || market.wagePerWorker} onChange={(event) => setWageDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label>}
-              {selectedSupplyOption.id.startsWith('rent_') && <label style={{ display: 'block', marginTop: '8px' }}>변경 후 {market.id === 'market_toy' ? '농지 이용료' : '임대료'}<input type="number" min="0" value={rentDraft[market.id] || market.rentPerRound} onChange={(event) => setRentDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label>}
+              {supportsSupplyEvents ? <><label style={{ display: 'block', marginTop: '8px', fontSize: '12px' }}>공급변동<select value={supplySelections[market.id] || 'supply_baseline'} onChange={(event) => { setSupplySelections((current) => ({ ...current, [market.id]: event.target.value })); setMaterialPriceDraft((current) => ({ ...current, [market.id]: 0 })); setWageDraft((current) => ({ ...current, [market.id]: 0 })); setRentDraft((current) => ({ ...current, [market.id]: 0 })); }} style={{ width: '100%', marginTop: '4px', padding: '9px' }}>{supplyOptions.map((option) => <option key={option.id} value={option.id}>{eventOptionLabel(option, '공급')}</option>)}</select></label>
+              {selectedSupplyOption.factor !== 'BASELINE' && <label style={{ display: 'block', marginTop: '8px', fontSize: '12px' }}>공급 효과 강도<select aria-label={`${market.name} 공급 효과 강도`} value={supplyIntensity} onChange={(event) => { setSupplyIntensities((current) => ({ ...current, [market.id]: event.target.value as EventIntensity })); setMaterialPriceDraft((current) => ({ ...current, [market.id]: 0 })); setWageDraft((current) => ({ ...current, [market.id]: 0 })); setRentDraft((current) => ({ ...current, [market.id]: 0 })); }} style={{ width: '100%', marginTop: '4px', padding: '9px' }}>{Object.entries(EVENT_INTENSITY_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
+              {selectedSupplyOption.id.startsWith('material_') && <label style={{ display: 'block', marginTop: '8px' }}>단위 재료비 <small>현재 {currentMaterialCost.toLocaleString()}원</small><input type="number" min="0" value={materialPriceDraft[market.id] || suggestedMaterialCost} onChange={(event) => setMaterialPriceDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label>}
+              {selectedSupplyOption.id.startsWith('wage_') && <label style={{ display: 'block', marginTop: '8px' }}>1명당 임금 <small>현재 {market.wagePerWorker.toLocaleString()}원</small><input type="number" min="0" value={wageDraft[market.id] || suggestedWage} onChange={(event) => setWageDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label>}
+              {selectedSupplyOption.id.startsWith('rent_') && <label style={{ display: 'block', marginTop: '8px' }}>{market.id === 'market_toy' ? '농지 이용료' : '임대료'} <small>현재 {market.rentPerRound.toLocaleString()}원</small><input type="number" min="0" value={rentDraft[market.id] || suggestedRent} onChange={(event) => setRentDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label>}</> : <p style={{ padding: '9px', borderRadius: '8px', background: '#eff6ff', color: '#1d4ed8', fontSize: '12px' }}>스마트폰은 시장 공급곡선 대신 기업별 생산량·희망가격과 진입 기업 수로 경쟁합니다. 공급 사건은 적용하지 않습니다.</p>}
               {selectedSupplyOption.id === 'producer_tax' && <label style={{ display: 'block', marginTop: '8px' }}>단위당 세금<input type="number" min="0" value={taxDraft[market.id] || 0} onChange={(event) => setTaxDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label>}
               {selectedSupplyOption.id === 'producer_subsidy' && <label style={{ display: 'block', marginTop: '8px' }}>단위당 보조금<input type="number" min="0" value={subsidyDraft[market.id] || 0} onChange={(event) => setSubsidyDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label>}
               {selectedSupplyOption.id === 'rice_typhoon' && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginTop: '8px' }}><label>피해 확률(%)<input type="number" min="0" max="100" value={disasterChanceDraft[market.id] || 40} onChange={(event) => setDisasterChanceDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label><label>피해율(%)<input type="number" min="0" max="100" value={disasterLossDraft[market.id] || 30} onChange={(event) => setDisasterLossDraft((current) => ({ ...current, [market.id]: Number(event.target.value) }))} style={{ width: '100%' }} /></label></div>}
@@ -689,7 +719,7 @@ export const TeacherPage: React.FC = () => {
         <section className="teacher-curves" style={card}><h3 style={{ marginTop: 0 }}>📉 전체 시장 수요·공급곡선</h3><p style={{ color: '#64748b', fontSize: '13px' }}>가격수용 시장의 전체 수요곡선과 전체 공급곡선만 표시합니다. 스마트폰 과점시장에는 하나의 공급곡선을 적용하지 않습니다.</p><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: '18px' }}>{activeRoom.markets.filter((market) => market.marketType === 'PERFECT_COMPETITION').map((market) => { const demandMultiplier = 1; return <MarketCurveChart key={market.id} market={market} plans={[]} demandMultiplier={demandMultiplier} />; })}</div></section>
 
         <section className={`teacher-company-comparison ${activeRoom.roundPhase === 'RESULT' ? 'is-settled' : ''}`} style={{ ...card, gridColumn: '1 / -1' }}>
-          <h3 style={{ marginTop: 0 }}>📋 Round {activeRoom.currentRound} 학생 기업 비교 현황판 ({roundPlans.length}/{companies.length} 확정)</h3>
+          <div className="comparison-heading"><h3 style={{ margin: 0 }}>📋 Round {activeRoom.currentRound} 학생 기업 비교 현황판 ({roundPlans.length}/{companies.length} 확정)</h3><label>정렬<select value={companySortKey} onChange={(event) => setCompanySortKey(event.target.value as CompanySortKey)}><option value="name">기업명순</option><option value="profit">이윤 높은순</option><option value="assets">총자산 높은순</option><option value="cash">순현금 높은순</option><option value="machines">기계 많은순</option><option value="workers">고용 많은순</option><option value="production">생산량 많은순</option><option value="sales">판매량 많은순</option></select></label></div>
           <p style={{ color: '#64748b', fontSize: '13px' }}>{activeRoom.roundPhase === 'RESULT' ? '라운드가 마감되어 실제 판매량·매출·이윤을 비교합니다.' : activeRoom.roundPhase === 'SELLING' ? '30초(4개월) 판매가 진행 중이며 실시간 판매량과 수입이 갱신됩니다.' : '현재 제출된 생산계획의 확정 고용·설비·비용과 전량 판매 가정 예상치를 비교합니다.'}</p>
           <div style={{ overflowX: 'auto' }}>
             <table>
@@ -708,11 +738,12 @@ export const TeacherPage: React.FC = () => {
                   <th>{activeRoom.roundPhase === 'RESULT' ? '실제 판매' : activeRoom.roundPhase === 'SELLING' ? '실시간 판매' : '예상 판매'}</th>
                   <th><button type="button" className="comparison-button profit-toggle" aria-pressed={showProfits} title={activeRoom.roundPhase === 'RESULT' ? '실제 이윤 공개 여부' : activeRoom.roundPhase === 'SELLING' ? '실시간 수입 공개 여부' : '예상 이윤 공개 여부'} onClick={() => setProfitVisibleKey(showProfits ? '' : profitKey)}>{showProfits ? '이윤 숨기기' : '이윤 보기'}</button></th>
                   <th>현금</th>
+                  <th>총자산</th>
                   <th>관리</th>
                 </tr>
               </thead>
               <tbody>
-                {companies.map((company) => {
+                {sortedCompanies.map((company) => {
                   const companyPlan = roundPlans.find((item) => item.companyId === company.id);
                   const averageCost = companyPlan ? Math.round((companyPlan.productionCost + (companyPlan.allocatedInvestmentCost || 0)) / Math.max(1, companyPlan.producedQuantity)) : null;
                   const expectedRevenue = companyPlan ? (companyPlan.offeredQuantity ?? companyPlan.producedQuantity) * (companyPlan.askingPrice || companyPlan.announcedPrice) : 0;
@@ -727,7 +758,7 @@ export const TeacherPage: React.FC = () => {
                       <td>{companyPlan?.marketName || '-'}</td>
                       <td>{company.quizAttempts?.[String(activeRoom.currentRound)] ? company.quizAttempts[String(activeRoom.currentRound)].correct ? '정답' : '오답' : company.quizCompletedRounds?.includes(activeRoom.currentRound) ? '완료' : '미제출'}</td>
                       <td>{companyPlan ? `${companyPlan.workerCount}명` : '-'}</td>
-                      <td>{companyPlan ? `${companyPlan.machineCountAfter}대` : '-'}</td>
+                      <td>{companyPlan ? `${companyPlan.machineCountAfter}대` : `${company.machineCount || 1}대`}<br /><small>구입분 감가 {(companyMachineDepreciationRate(company, activeRoom.currentRound) * 100).toFixed(0)}% · 가치 ${companyMachineAssetValue(company, activeRoom.currentRound).toLocaleString()}원</small></td>
                       <td>{companyPlan ? `${companyPlan.producedQuantity.toLocaleString()}/${(companyPlan.offeredQuantity ?? companyPlan.producedQuantity).toLocaleString()}` : '-'}</td>
                       <td>{companyPlan ? `${companyPlan.marginalProduct.toFixed(2)}` : '-'}</td>
                       <td>{averageCost === null ? '-' : `${averageCost.toLocaleString()}원`}</td>
@@ -737,6 +768,7 @@ export const TeacherPage: React.FC = () => {
                         {!showProfits ? '비공개' : companyPlan ? settled ? `${(companyPlan.economicProfit || 0).toLocaleString()}원` : activeRoom.roundPhase === 'SELLING' ? <b style={{ color: '#16a34a' }}>{liveSales?.liveRevenue.toLocaleString()}원</b> : `${expectedProfit.toLocaleString()}원` : '-'}
                       </td>
                       <td>{company.cash.toLocaleString()}원<br /><small>빚 {(company.loanBalance || 0).toLocaleString()}원 · 차감 후 {(company.cash - (company.loanBalance || 0)).toLocaleString()}원</small></td>
+                      <td>{(company.cash - (company.loanBalance || 0) + companyMachineAssetValue(company, activeRoom.currentRound)).toLocaleString()}원<br /><small>순현금 + 기계 현재가치</small></td>
                       <td style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
                         <button type="button" className="comparison-button" onClick={() => setSelectedCompanyId(company.id)}>상세</button>
                         <button type="button" className="comparison-button comparison-edit" disabled={companyActionId === company.id} onClick={() => handleRenameCompany(company)} title="팀명 수정">수정</button>

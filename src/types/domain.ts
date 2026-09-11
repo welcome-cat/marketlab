@@ -173,12 +173,29 @@ export interface Room {
     revenue: number;
     economicProfit: number;
   } | null;
+  roundLeaders?: {
+    roundNumber: number;
+    profit: RoundLeader;
+    cash: RoundLeader;
+    assets: RoundLeader;
+  } | null;
   createdAt: number;
   // 이전 버전 룸 문서 호환용
   marketId?: string;
   marketName?: string;
   marketDescription?: string;
   marketIcon?: string;
+}
+
+export interface RoundLeader {
+  companyId: string;
+  companyName: string;
+  marketName: string;
+  value: number;
+  soldQuantity?: number;
+  revenue?: number;
+  netCash?: number;
+  machineValue?: number;
 }
 
 export interface ReflectionQuestion { id: string; prompt: string; }

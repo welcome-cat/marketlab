@@ -127,6 +127,7 @@ export const normalizeRoom = (roomId: string, data: Partial<Room>): Room => ({
   reflectionSheets: data.reflectionSheets?.length ? data.reflectionSheets : DEFAULT_REFLECTION_SHEETS,
   newsTemplates: data.newsTemplates || {},
   roundWinner: data.roundWinner || null,
+  roundLeaders: data.roundLeaders || null,
   createdAt: data.createdAt || 0,
 });
 

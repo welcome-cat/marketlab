@@ -38,6 +38,26 @@ async function joinStudent(browser: Browser, baseURL: string, roomCode: string, 
 
   await expect(page.getByRole('heading', { name: `🏢 ${companyName}` })).toBeVisible();
   await expect(page.getByText(new RegExp(`룸 ${roomCode}`))).toBeVisible();
+  await expect(page.getByRole('button', { name: /카페 음료 시장/ })).toBeHidden();
+
+  await page.getByRole('button', { name: '튜토리얼' }).click();
+  await expect(page.locator('.student-market')).toBeVisible();
+  await expect(page.locator('.student-investment')).toBeVisible();
+  await expect(page.locator('.student-finance')).toBeVisible();
+  await expect(page.locator('.student-sale')).toBeVisible();
+  await expect(page.locator('.student-selling-progress')).toBeVisible();
+  await page.locator('dialog.student-tour').getByRole('button', { name: '종료' }).click();
+  await expect(page.locator('.student-market')).toHaveCount(0);
+  await expect(page.locator('.student-investment')).toHaveCount(0);
+  await expect(page.locator('.student-finance')).toHaveCount(0);
+  await expect(page.locator('.student-selling-progress')).toHaveCount(0);
+
+  await page.getByLabel(/농업 생산 경험/).check();
+  await page.getByRole('button', { name: '기업 특성 확정' }).click();
+  await expect(page.getByRole('button', { name: /쌀 시장/ })).toBeVisible();
+  await page.locator('.student-diagnosis > summary').click();
+  await expect(page.getByRole('button', { name: '모의 생산 비교 열기' })).toBeVisible();
+  await expect(page.locator('.diagnosis-simulation')).toBeHidden();
   return { context, companyName };
 }
 
